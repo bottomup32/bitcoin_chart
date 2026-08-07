@@ -183,11 +183,13 @@ def main() -> int:
             narrative=narrative,
             portfolio_as_of=as_of.isoformat() if as_of else None,
         )
-        emailed = False
+        emailed, email_reason = False, "not attempted"
         try:
-            emailed = send_email(f"일일 포트폴리오 브리핑 — {session}", report_md)
+            emailed, email_reason = send_email(f"일일 포트폴리오 브리핑 — {session}", report_md)
         except Exception as exc:  # noqa: BLE001 — delivery failure shouldn't fail the run
-            print(f"email delivery failed: {type(exc).__name__}")
+            email_reason = f"{type(exc).__name__}"
+        if not emailed:
+            print(f"email not sent: {email_reason}")
         cur.execute(
             """
             insert into reports (run_id, body_md, sent_at)

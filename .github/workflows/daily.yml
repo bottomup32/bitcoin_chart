@@ -10,9 +10,13 @@
 name: daily
 
 on:
-  schedule:
-    - cron: '30 0 * * 2-6'   # Tue–Sat UTC = Mon–Fri ET evenings
-    - cron: '30 1 * * 2-6'
+  # SCHEDULE PAUSED — manual runs only while the setup is being verified, so
+  # no LLM tokens are spent unattended. Re-enable by uncommenting both slots;
+  # they cover EDT and EST, and run_advise skips the second one because it is
+  # idempotent per session.
+  # schedule:
+  #   - cron: '30 0 * * 2-6'   # Tue–Sat UTC = Mon–Fri ET evenings
+  #   - cron: '30 1 * * 2-6'
   workflow_dispatch:
     inputs:
       force:
