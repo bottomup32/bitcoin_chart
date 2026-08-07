@@ -1,0 +1,45 @@
+# Daily price ingest (PLAN.md §3).
+#
+# Two UTC slots + an in-job NYSE session guard handle DST and holidays:
+# 00:30 UTC covers EDT (close 20:00 UTC), 01:30 UTC covers EST (close 21:00 UTC).
+# The job is idempotent, so the second slot and manual re-runs are harmless,
+# and catch-up after skipped days happens automatically.
+#
+# NOTE: GitHub disables schedules after 60 days without repo activity — keep
+# the repo alive or re-enable manually (PLAN.md §3).
+name: daily
+
+on:
+  schedule:
+    - cron: '30 0 * * 2-6'   # Tue–Sat UTC = Mon–Fri ET evenings
+    - cron: '30 1 * * 2-6'
+  workflow_dispatch: {}
+
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: uv sync --no-dev
+
+      - name: Apply migrations
+        run: uv run python -m jobs.apply_migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+
+      - name: Ingest prices
+        run: uv run python -m jobs.run_ingest
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          WATCHLIST: ${{ vars.WATCHLIST }}
