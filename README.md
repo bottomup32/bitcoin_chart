@@ -103,10 +103,10 @@ uv run python -m jobs.ingest_portfolio activity Activity.csv --account brokerage
 이후 평일 미국장 마감 후 자동으로 가격이 쌓인다. Actions 탭에서 `daily` 워크플로를
 `workflow_dispatch`로 수동 실행해 첫 백필을 트리거할 수 있다.
 
-## 다음 단계
+## 남은 확장 (PLAN.md §5 6단계)
 
-PLAN.md §5의 로드맵:
-
-4. 페이퍼 트레이딩 기록 (다음 시가 체결)
-5. 평가·학습 루프 (결측 스캔 채점, 가중치 갱신)
-6. Fundamental·Risk 에이전트, 소스 확장, 대시보드
+- **Fundamental 에이전트** — SEC EDGAR / FMP 펀더멘털 인제스트 어댑터가 선행 조건
+  (데이터 없이 켜면 환각 위험이라 의도적으로 보류; 투표·채점 배선은 이미 준비됨)
+- **매크로·리서치 소스** — FRED, VIX, 리서치 RSS 어댑터 + 소스×종목 가중치 학습
+- **주간 리포트** — 가상 장부 vs 실보유 vs SPY 3선 누적 비교
+- **대시보드** — Netlify + Supabase RLS/Auth 설계 선행
