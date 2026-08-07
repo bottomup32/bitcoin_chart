@@ -56,6 +56,8 @@ def main() -> int:
         print("no completed NYSE session; exiting")
         return 0
 
+    force = os.environ.get("FORCE_ADVISE", "").strip().lower() in ("1", "true", "yes")
+
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             "select 1 from prices where ticker = %s and trade_date = %s",
@@ -64,6 +66,20 @@ def main() -> int:
         if cur.fetchone() is None:
             print(f"prices for {session} not ingested yet; run run_ingest first")
             return 1
+
+        # The workflow fires two UTC slots to cover DST, and both resolve to
+        # the same session — without this guard the agents would run twice a
+        # day (double LLM spend) and mail two reports. Manual runs can force.
+        cur.execute(
+            "select 1 from runs where run_date = %s and status = 'succeeded'",
+            (session,),
+        )
+        if cur.fetchone() is not None and not force:
+            print(
+                f"advice for {session} already generated; skipping "
+                "(set FORCE_ADVISE=1, or use the workflow's 'force' input, to re-run)"
+            )
+            return 0
 
         # Nothing to advise on yet is a no-op, not a failure — same posture as
         # the holiday guard. Checked before a run row exists so empty days
