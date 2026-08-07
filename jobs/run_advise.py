@@ -65,6 +65,18 @@ def main() -> int:
             print(f"prices for {session} not ingested yet; run run_ingest first")
             return 1
 
+        # Nothing to advise on yet is a no-op, not a failure — same posture as
+        # the holiday guard. Checked before a run row exists so empty days
+        # leave no 'failed' rows behind.
+        universe = _universe(cur)
+        if not universe:
+            print(
+                "nothing to advise on: no holdings seeded and WATCHLIST is empty. "
+                "Seed lots with jobs.ingest_portfolio, or set the WATCHLIST "
+                "repository variable (e.g. NVDA,MSFT)."
+            )
+            return 0
+
         cur.execute(
             """
             insert into runs (run_date, status, prompt_version, model_id)
@@ -78,12 +90,6 @@ def main() -> int:
         )
         run_id = cur.fetchone()[0]
 
-        universe = _universe(cur)
-        if not universe:
-            print("universe empty — seed holdings or set WATCHLIST")
-            cur.execute("update runs set status = 'failed', finished_at = now() where id = %s", (run_id,))
-            conn.commit()
-            return 1
         for ticker, origin in universe.items():
             cur.execute(
                 """
