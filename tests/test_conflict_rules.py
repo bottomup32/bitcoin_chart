@@ -38,6 +38,26 @@ def test_tax_agent_never_votes_on_direction():
     assert d.confidence == 0.3
 
 
+def test_r1_risk_veto_blocks_added_exposure():
+    ops = [op("daily_signal", "buy", 0.9), op("allocation", "buy", 0.8),
+           op("risk", "trim", 0.7)]
+    d = decide("AAPL", ops, W)
+    assert d.action == "hold"
+    assert d.rules_applied == ["R1"]
+    assert d.confidence <= 0.7
+
+
+def test_risk_hold_does_not_veto():
+    ops = [op("daily_signal", "buy", 0.9), op("allocation", "buy", 0.8),
+           op("risk", "hold", 0.9)]
+    assert decide("AAPL", ops, W).action == "buy"
+
+
+def test_risk_agent_never_votes_on_direction():
+    d = decide("AAPL", [op("risk", "sell", 0.95)], W)
+    assert d.action == "hold" and d.confidence == 0.3
+
+
 def test_t1_long_term_deferral():
     ops = [op("daily_signal", "sell", 0.8), op("tax", "hold", 0.9)]
     tax = TaxFlags(has_unrealized_gain=True, days_to_longterm=30)

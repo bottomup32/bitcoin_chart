@@ -53,16 +53,17 @@ def _upsert_prices(cur, records: list[PriceRecord]) -> int:
     for r in records:
         cur.execute(
             """
-            insert into prices (ticker, trade_date, close, adj_close, volume, source)
-            values (%s, %s, %s, %s, %s, %s)
+            insert into prices (ticker, trade_date, close, adj_close, volume, source, open)
+            values (%s, %s, %s, %s, %s, %s, %s)
             on conflict (ticker, trade_date) do update
                 set close = excluded.close,
                     adj_close = excluded.adj_close,
                     volume = excluded.volume,
                     source = excluded.source,
+                    open = coalesce(excluded.open, prices.open),
                     ingested_at = now()
             """,
-            (r.ticker, r.trade_date, r.close, r.adj_close, r.volume, r.source),
+            (r.ticker, r.trade_date, r.close, r.adj_close, r.volume, r.source, r.open),
         )
     return len(records)
 

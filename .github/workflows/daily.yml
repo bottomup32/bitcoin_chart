@@ -55,3 +55,9 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           REPORT_EMAIL_TO: ${{ vars.REPORT_EMAIL_TO }}
           REPORT_EMAIL_FROM: ${{ vars.REPORT_EMAIL_FROM }}
+
+      # Missing-scan driven: catches up on any prior days automatically.
+      - name: Paper fills, scoring, weight updates
+        run: uv run python -m jobs.run_evaluate
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}

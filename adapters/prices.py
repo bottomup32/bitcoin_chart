@@ -23,6 +23,7 @@ class PriceRecord:
     adj_close: float
     volume: int | None
     source: str
+    open: float | None = None  # next-session open is the paper fill price
 
 
 def fetch_yfinance(tickers: list[str], start: date, end: date) -> list[PriceRecord]:
@@ -57,6 +58,7 @@ def fetch_yfinance(tickers: list[str], start: date, end: date) -> list[PriceReco
             if close <= 0 or adj_close <= 0:
                 continue
             volume = row.get("Volume")
+            open_ = row.get("Open")
             records.append(
                 PriceRecord(
                     ticker=ticker,
@@ -65,6 +67,7 @@ def fetch_yfinance(tickers: list[str], start: date, end: date) -> list[PriceReco
                     adj_close=adj_close,
                     volume=int(volume) if volume == volume else None,  # NaN guard
                     source="yfinance",
+                    open=float(open_) if open_ == open_ and open_ and open_ > 0 else None,
                 )
             )
     return records
@@ -96,6 +99,11 @@ def fetch_stooq(ticker: str, start: date, end: date) -> list[PriceRecord]:
         if close <= 0:
             continue
         volume_raw = row.get("Volume", "")
+        open_raw = row.get("Open", "")
+        try:
+            open_ = float(open_raw) if open_raw else None
+        except ValueError:
+            open_ = None
         records.append(
             PriceRecord(
                 ticker=ticker,
@@ -104,6 +112,7 @@ def fetch_stooq(ticker: str, start: date, end: date) -> list[PriceRecord]:
                 adj_close=close,
                 volume=int(float(volume_raw)) if volume_raw not in ("", None) else None,
                 source="stooq",
+                open=open_ if open_ and open_ > 0 else None,
             )
         )
     return records

@@ -6,6 +6,8 @@ confidence; the tax agent never votes on direction — it acts through the
 override rules below, mirroring its exclusion from Brier scoring (PLAN.md §4).
 
 Override rules:
+- R1  Risk veto: the risk agent recommending trim/sell blocks a buy/add vote
+      → hold (never add exposure over the risk agent's objection).
 - T1  Long-term deferral: a vote to sell/trim a position with gains that is
       within `defer_days` of long-term treatment, while tax says hold, becomes
       "hold, revisit in N days".
@@ -13,6 +15,9 @@ Override rules:
       wash-sale flagged becomes hold (selling now would disallow the loss).
 - T3  Harvest nudge: tax recommends selling a losing position (harvest), the
       vote is hold, and no wash-sale flag exists → trim (partial harvest).
+
+The risk agent, like tax, never votes on direction (both are excluded from
+Brier-based weight learning in v1 — PLAN.md §4).
 """
 
 from __future__ import annotations
@@ -71,6 +76,7 @@ def decide(
     tax = tax or TaxFlags()
     votes = [o for o in opinions if o.agent in VOTE_AGENTS]
     tax_op = next((o for o in opinions if o.agent == "tax"), None)
+    risk_op = next((o for o in opinions if o.agent == "risk"), None)
 
     if votes:
         norm = sum(o.confidence * weights.get(o.agent, DEFAULT_WEIGHT) for o in votes)
@@ -88,6 +94,12 @@ def decide(
     trace.append(f"weighted vote score {score:+.2f} -> {action}")
     rules: list[str] = []
     revisit: int | None = None
+
+    # R1 — never add exposure over the risk agent's objection
+    if action in ("buy", "add") and risk_op is not None and risk_op.direction in ("sell", "trim"):
+        action = "hold"
+        confidence = min(confidence, risk_op.confidence)
+        rules.append("R1: risk veto — no added exposure")
 
     # T1 — hold for imminent long-term transition
     if (

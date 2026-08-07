@@ -80,3 +80,37 @@ def summarize_ticker(bars: list[Bar], benchmark: list[Bar]) -> dict:
 
 def _round(x: float | None, digits: int = 4) -> float | None:
     return round(x, digits) if x is not None else None
+
+
+def correlation_matrix(series: dict[str, list[Bar]], n: int = 63) -> dict[str, dict[str, float]]:
+    """Pairwise correlation of daily adj_close returns, aligned by trade_date.
+
+    Feeds the Risk agent's concentration view; pairs with fewer than 20
+    overlapping returns are omitted rather than reported on thin data.
+    """
+    returns: dict[str, dict[date, float]] = {}
+    for ticker, bars in series.items():
+        tail = bars[-(n + 1):]
+        returns[ticker] = {
+            b.trade_date: b.adj_close / a.adj_close - 1.0 for a, b in zip(tail, tail[1:])
+        }
+
+    tickers = sorted(returns)
+    matrix: dict[str, dict[str, float]] = {t: {} for t in tickers}
+    for i, a in enumerate(tickers):
+        for b in tickers[i + 1:]:
+            common = sorted(set(returns[a]) & set(returns[b]))
+            if len(common) < 20:
+                continue
+            xs = [returns[a][d] for d in common]
+            ys = [returns[b][d] for d in common]
+            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+            cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+            vx = sum((x - mx) ** 2 for x in xs)
+            vy = sum((y - my) ** 2 for y in ys)
+            if vx <= 0 or vy <= 0:
+                continue
+            corr = round(cov / math.sqrt(vx * vy), 2)
+            matrix[a][b] = corr
+            matrix[b][a] = corr
+    return matrix

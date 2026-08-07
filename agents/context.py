@@ -70,6 +70,12 @@ def portfolio_context(cur) -> dict:
     return {"total_value": round(total, 2), "positions": positions}
 
 
+def correlation_context(cur, tickers: list[str]) -> dict:
+    from core.indicators import correlation_matrix
+
+    return correlation_matrix({t: _bars(cur, t) for t in tickers})
+
+
 def tax_context(cur) -> dict:
     cur.execute(
         """

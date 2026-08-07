@@ -18,15 +18,21 @@ from __future__ import annotations
 import os
 
 from adapters.resend_email import send_email
-from agents import allocation, daily_signal, tax
+from agents import allocation, daily_signal, risk, tax
 from agents.base import PROMPT_VERSION, model_id, run_agent, save_opinions
-from agents.context import BENCHMARK, market_context, portfolio_context, tax_context
+from agents.context import (
+    BENCHMARK,
+    correlation_context,
+    market_context,
+    portfolio_context,
+    tax_context,
+)
 from core.orchestrator import orchestrate, synthesize_narrative, tax_alerts
 from core.report import build_report
 from core.trade_date import latest_completed_session
 from db.client import get_conn
 
-CRITICAL_AGENTS = {tax.NAME}
+CRITICAL_AGENTS = {tax.NAME, risk.NAME}  # PLAN.md §1 [4] partial-failure policy
 
 
 def _universe(cur) -> dict[str, str]:
@@ -91,10 +97,13 @@ def main() -> int:
         market = market_context(cur, sorted(universe))
         portfolio = portfolio_context(cur)
         taxes = tax_context(cur)
+        held = sorted(t for t, origin in universe.items() if origin == "holding")
+        correlations = correlation_context(cur, held) if len(held) > 1 else {}
 
         agent_calls = [
             (daily_signal.NAME, daily_signal.SYSTEM, daily_signal.build_context(cur, market)),
             (allocation.NAME, allocation.SYSTEM, allocation.build_context(cur, market, portfolio)),
+            (risk.NAME, risk.SYSTEM, risk.build_context(cur, market, portfolio, correlations)),
             (tax.NAME, tax.SYSTEM, tax.build_context(cur, taxes)),
         ]
 
