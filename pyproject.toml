@@ -10,6 +10,7 @@ dependencies = [
     "yfinance==0.2.65",
     "requests>=2.31",
     "python-dateutil>=2.8",
+    "anthropic>=0.70",
 ]
 
 [dependency-groups]

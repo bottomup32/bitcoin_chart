@@ -43,3 +43,12 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           WATCHLIST: ${{ vars.WATCHLIST }}
+
+      # Skips itself with exit 0 until the ANTHROPIC_API_KEY secret is set.
+      - name: Run analysis agents
+        run: uv run python -m jobs.run_advise
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          WATCHLIST: ${{ vars.WATCHLIST }}
+          MODEL_ID: ${{ vars.MODEL_ID }}
