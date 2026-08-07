@@ -1,0 +1,13 @@
+# secrets & local env
+.env
+.env.*
+
+# portfolio data must never be committed (see PLAN.md §6)
+*.csv
+data/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

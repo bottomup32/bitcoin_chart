@@ -1,0 +1,24 @@
+[project]
+name = "quant-pm"
+version = "0.1.0"
+description = "Personal multi-agent quant portfolio advisor (informational only, not investment advice)"
+requires-python = ">=3.11"
+dependencies = [
+    "psycopg[binary]>=3.1",
+    "pandas>=2.1",
+    "pandas-market-calendars>=4.3",
+    "yfinance==0.2.65",
+    "requests>=2.31",
+    "python-dateutil>=2.8",
+    "anthropic>=0.70",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
