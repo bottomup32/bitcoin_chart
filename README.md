@@ -1,7 +1,7 @@
 # quant-pm — 퀀트 멀티 에이전트 포트폴리오 매니저
 
 개인 주식 포트폴리오를 위한 멀티 에이전트 자문 시스템.
-설계 전체는 [PLAN.md](PLAN.md) 참조. 현재 **2단계(분석 에이전트 3개 + 워시세일 검증)** 구현 상태.
+설계 전체는 [PLAN.md](PLAN.md) 참조. 현재 **3단계(오케스트레이터 + 일일 리포트)** 구현 상태.
 
 > ⚠️ **면책**: 이 시스템은 정보 제공용이며 투자 자문이 아닙니다. 모든 투자 결정과 그 결과는
 > 사용자 본인의 책임입니다.
@@ -27,6 +27,17 @@
 - 기술 지표 계산 (`core/indicators.py`) — 에이전트는 코드가 계산한 숫자만 읽음
 - 일일 advise 잡 (`jobs/run_advise.py`) — 세션 가드 → 유니버스 기록 → 에이전트 3개 실행.
   Tax 실패는 중단, 나머지는 결측 표기 후 진행 (PLAN.md 부분 실패 정책)
+
+**3단계 — 오케스트레이터 + 리포트:**
+
+- 충돌 조율 규칙 (`core/conflict_rules.py`) — 코드로 결정, LLM은 서술만:
+  가중 투표(방향×확신도×에이전트 가중치) + T1 장기전환 유예("매도 표결이어도 N일 후
+  장기 세율이면 홀드 후 재평가") + T2 워시세일 차단 + T3 하베스트 넛지
+- 결정 스냅샷 (`core/orchestrator.py`) — `orchestrator_decisions`에 당일 종가·수정종가·SPY
+  스냅샷과 함께 저장 (채점 기준점, 룩어헤드 금지)
+- 일일 리포트 (`core/report.py`) — 한국어 마크다운: 최종 결정 테이블, 워시세일 경고,
+  장기전환 임박, 에이전트 의견 상세, 면책 고지. LLM 요약(선택)은 실패해도 리포트는 발행
+- 이메일 발송 (`adapters/resend_email.py`) — Resend 무료 티어, 미설정 시 DB 저장만
 
 ## 셋업
 
@@ -69,6 +80,8 @@ uv run python -m jobs.ingest_portfolio activity Activity.csv --account brokerage
 - **Secrets** → `ANTHROPIC_API_KEY` = Claude API 키 (없으면 에이전트 단계는 자동 스킵)
 - **Variables** (선택) → `WATCHLIST` = `NVDA,MSFT,...` (보유 외 추적 종목)
 - **Variables** (선택) → `MODEL_ID` = 에이전트 모델 오버라이드 (기본 `claude-sonnet-5`)
+- **Secrets** (선택) → `RESEND_API_KEY` + **Variables** `REPORT_EMAIL_TO` = 일일 리포트 이메일
+  수신 설정 (없으면 리포트는 `reports` 테이블에만 저장)
 
 이후 평일 미국장 마감 후 자동으로 가격이 쌓인다. Actions 탭에서 `daily` 워크플로를
 `workflow_dispatch`로 수동 실행해 첫 백필을 트리거할 수 있다.
@@ -77,7 +90,6 @@ uv run python -m jobs.ingest_portfolio activity Activity.csv --account brokerage
 
 PLAN.md §5의 로드맵:
 
-3. 오케스트레이터 + 일일 이메일 리포트
 4. 페이퍼 트레이딩 기록 (다음 시가 체결)
 5. 평가·학습 루프 (결측 스캔 채점, 가중치 갱신)
 6. Fundamental·Risk 에이전트, 소스 확장, 대시보드

@@ -1,23 +1,28 @@
-"""Daily advise job: run the analysis agents and store structured opinions.
+"""Daily advise job: agents → orchestrator → decisions → report (PLAN.md §5 2-3단계).
 
-Phase 2 scope (PLAN.md §5): three agents (daily_signal, allocation, tax) write
-to agent_opinions. The orchestrator/report layer arrives in phase 3.
+Flow: session guard → record run + universe → run 3 agents (structured
+opinions) → deterministic conflict rules produce decisions with price
+snapshots → build the Korean daily report (LLM narrative optional) → store in
+reports and email via Resend when configured.
 
 Partial-failure policy (PLAN.md §1 [4]): tax failure aborts the run; a
-daily_signal/allocation failure is recorded and the run continues.
+daily_signal/allocation failure is recorded and the run continues degraded.
 
 Requires ANTHROPIC_API_KEY and an already-ingested prices table for the
-session (run_ingest runs first in the workflow). Logs print counts only.
+session (run_ingest runs first in the workflow). Logs print counts only —
+never holdings or report contents (PLAN.md §6).
 """
 
 from __future__ import annotations
 
 import os
-import sys
 
+from adapters.resend_email import send_email
 from agents import allocation, daily_signal, tax
 from agents.base import PROMPT_VERSION, model_id, run_agent, save_opinions
 from agents.context import BENCHMARK, market_context, portfolio_context, tax_context
+from core.orchestrator import orchestrate, synthesize_narrative, tax_alerts
+from core.report import build_report
 from core.trade_date import latest_completed_session
 from db.client import get_conn
 
@@ -111,6 +116,56 @@ def main() -> int:
                     )
                     conn.commit()
                     return 1
+
+        # ── orchestrate: deterministic rules → decisions with price snapshots ──
+        decisions, skipped = orchestrate(cur, run_id, session, taxes)
+        conn.commit()
+        print(f"orchestrator: {len(decisions)} decisions" +
+              (f", {skipped} tickers skipped (no price snapshot)" if skipped else ""))
+
+        # ── report: markdown + optional LLM narrative, stored + emailed ──
+        cur.execute(
+            """
+            select agent, ticker, direction, confidence, timeframe, rationale
+            from agent_opinions where run_id = %s
+            """,
+            (run_id,),
+        )
+        opinion_rows = [
+            {"agent": r[0], "ticker": r[1], "direction": r[2],
+             "confidence": float(r[3]), "timeframe": r[4], "rationale": r[5]}
+            for r in cur.fetchall()
+        ]
+        cur.execute("select max(created_at)::date from tax_lots")
+        as_of = cur.fetchone()[0]
+
+        narrative = synthesize_narrative(decisions, opinion_rows) if decisions else None
+        report_md = build_report(
+            run_date=session,
+            decisions=[
+                {"ticker": d.ticker, "action": d.action, "confidence": d.confidence,
+                 "rationale": d.rationale, "revisit_days": d.revisit_days}
+                for d in decisions
+            ],
+            opinions=opinion_rows,
+            tax_alerts=tax_alerts(taxes),
+            narrative=narrative,
+            portfolio_as_of=as_of.isoformat() if as_of else None,
+        )
+        emailed = False
+        try:
+            emailed = send_email(f"일일 포트폴리오 브리핑 — {session}", report_md)
+        except Exception as exc:  # noqa: BLE001 — delivery failure shouldn't fail the run
+            print(f"email delivery failed: {type(exc).__name__}")
+        cur.execute(
+            """
+            insert into reports (run_id, body_md, sent_at)
+            values (%s, %s, case when %s then now() end)
+            """,
+            (run_id, report_md, emailed),
+        )
+        print(f"report stored ({len(report_md)} chars), emailed={emailed}, "
+              f"narrative={'yes' if narrative else 'no'}")
 
         status = "succeeded" if not failed else "failed"
         cur.execute(

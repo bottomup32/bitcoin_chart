@@ -52,3 +52,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WATCHLIST: ${{ vars.WATCHLIST }}
           MODEL_ID: ${{ vars.MODEL_ID }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_EMAIL_TO: ${{ vars.REPORT_EMAIL_TO }}
+          REPORT_EMAIL_FROM: ${{ vars.REPORT_EMAIL_FROM }}
