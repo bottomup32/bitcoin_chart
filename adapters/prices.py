@@ -45,16 +45,27 @@ def fetch_yfinance(tickers: list[str], start: date, end: date) -> list[PriceReco
     if df is None or df.empty:
         return []
 
+    import pandas as pd
+
+    # With group_by="ticker" the columns are a (ticker, field) MultiIndex even
+    # for a single ticker; some yfinance versions return flat columns instead.
+    multi = isinstance(df.columns, pd.MultiIndex)
+
     records: list[PriceRecord] = []
     for ticker in tickers:
-        try:
-            sub = df[ticker] if len(tickers) > 1 else df
-        except KeyError:
+        if multi:
+            if ticker not in df.columns.get_level_values(0):
+                continue
+            sub = df[ticker]
+        else:
+            sub = df
+        if "Close" not in sub.columns:
             continue
-        sub = sub.dropna(subset=["Close", "Adj Close"])
+        adj_col = "Adj Close" if "Adj Close" in sub.columns else "Close"
+        sub = sub.dropna(subset=["Close"])
         for ts, row in sub.iterrows():
             close = float(row["Close"])
-            adj_close = float(row["Adj Close"])
+            adj_close = float(row[adj_col])
             if close <= 0 or adj_close <= 0:
                 continue
             volume = row.get("Volume")
@@ -83,7 +94,12 @@ def fetch_stooq(ticker: str, start: date, end: date) -> list[PriceRecord]:
         "https://stooq.com/q/d/l/"
         f"?s={ticker.lower()}.us&d1={start:%Y%m%d}&d2={end:%Y%m%d}&i=d"
     )
-    resp = requests.get(url, timeout=30)
+    # Stooq rejects requests-default User-Agent from datacenter IPs.
+    resp = requests.get(
+        url,
+        timeout=30,
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
+    )
     resp.raise_for_status()
     body = resp.text.strip()
     if not body or body.lower().startswith("no data"):
