@@ -100,8 +100,30 @@ uv run python -m jobs.ingest_portfolio activity Activity.csv --account brokerage
 - **Secrets** (선택) → `RESEND_API_KEY` + **Variables** `REPORT_EMAIL_TO` = 일일 리포트 이메일
   수신 설정 (없으면 리포트는 `reports` 테이블에만 저장)
 
-이후 평일 미국장 마감 후 자동으로 가격이 쌓인다. Actions 탭에서 `daily` 워크플로를
-`workflow_dispatch`로 수동 실행해 첫 백필을 트리거할 수 있다.
+Actions 탭 → `daily` → **Run workflow**로 수동 실행한다.
+(정기 cron은 검증 중 토큰 절약을 위해 주석 처리해뒀다 — `daily.yml`의 두 줄만 풀면 재가동.)
+
+## 리포트 읽기
+
+리포트는 `reports` 테이블에 저장되고, 설정 시 이메일로 발송된다.
+**리포에 커밋되지 않고 CI 로그에도 찍히지 않는다** (public 리포이므로 포트폴리오 노출 방지).
+
+```bash
+export SUPABASE_DB_URL='postgresql://...'
+uv run python -m jobs.show_report              # 최신 리포트 출력
+uv run python -m jobs.show_report --list       # 저장된 리포트 목록
+uv run python -m jobs.show_report --email      # 최신 리포트 재발송 (LLM 호출 0)
+```
+
+Supabase 대시보드에서 보려면 SQL Editor에서:
+
+```sql
+select unnest(string_to_array(body_md, E'\n')) as line
+from (select body_md from reports order by id desc limit 1) r;
+```
+
+> ⚠️ Resend 기본 발신자(`onboarding@resend.dev`)는 **Resend 계정 본인 이메일로만** 발송된다.
+> 다른 주소로 받으려면 도메인 인증이 필요하다.
 
 ## 남은 확장 (PLAN.md §5 6단계)
 
