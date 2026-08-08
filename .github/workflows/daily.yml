@@ -23,6 +23,10 @@ on:
         description: 'Re-run the agents even if advice already exists for this session'
         type: boolean
         default: false
+      email_only:
+        description: 'Only re-send the latest stored report by email (no LLM calls)'
+        type: boolean
+        default: false
 
 concurrency:
   group: daily
@@ -47,7 +51,19 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
+      # Re-sends what is already stored — useful for verifying email delivery
+      # without spending a single token on the agents.
+      - name: Re-send latest report by email
+        if: ${{ inputs.email_only }}
+        run: uv run python -m jobs.show_report --email
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_EMAIL_TO: ${{ vars.REPORT_EMAIL_TO }}
+          REPORT_EMAIL_FROM: ${{ vars.REPORT_EMAIL_FROM }}
+
       - name: Ingest prices
+        if: ${{ !inputs.email_only }}
         run: uv run python -m jobs.run_ingest
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -55,6 +71,7 @@ jobs:
 
       # Skips itself with exit 0 until the ANTHROPIC_API_KEY secret is set.
       - name: Run analysis agents
+        if: ${{ !inputs.email_only }}
         run: uv run python -m jobs.run_advise
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -68,6 +85,7 @@ jobs:
 
       # Missing-scan driven: catches up on any prior days automatically.
       - name: Paper fills, scoring, weight updates
+        if: ${{ !inputs.email_only }}
         run: uv run python -m jobs.run_evaluate
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
