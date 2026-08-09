@@ -17,6 +17,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from core.llm_log import CallRecord, Usage, measure_chars
+
 DEFAULT_MODEL = "claude-sonnet-5"  # PLAN.md §3; override with MODEL_ID env
 PROMPT_VERSION = "v1"
 
@@ -53,8 +55,21 @@ def model_id() -> str:
     return os.environ.get("MODEL_ID") or DEFAULT_MODEL
 
 
-def run_agent(system_prompt: str, context: dict) -> list[Opinion]:
-    """One structured-output call; SDK retries transient errors itself."""
+def run_agent(
+    system_prompt: str | list[dict],
+    context: dict,
+    *,
+    system_knowledge_chars: int = 0,
+) -> tuple[list[Opinion], CallRecord]:
+    """One structured-output call; SDK retries transient errors itself.
+
+    system_prompt may be a plain string or a list of content blocks — the latter
+    is what lets the shared knowledge block carry a cache_control breakpoint
+    while the per-agent role text follows it uncached.
+
+    Returns the opinions alongside the call's token accounting, so the caller
+    can log the cost without the agent module needing a DB handle.
+    """
     import anthropic
 
     client = anthropic.Anthropic()
@@ -71,7 +86,14 @@ def run_agent(system_prompt: str, context: dict) -> list[Opinion]:
         output_format=OpinionSet,
     )
     parsed = response.parsed_output
-    return parsed.opinions if parsed else []
+    record = CallRecord(
+        usage=Usage.from_response(response),
+        chars=measure_chars(
+            system_prompt, context, system_knowledge_chars=system_knowledge_chars
+        ),
+        ok=parsed is not None,
+    )
+    return (parsed.opinions if parsed else []), record
 
 
 def save_opinions(cur, run_id: int, agent: str, opinions: list[Opinion]) -> int:

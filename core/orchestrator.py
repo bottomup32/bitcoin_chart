@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date
 
 from core.conflict_rules import Decision, OpinionInput, TaxFlags, decide
+from core.llm_log import CallRecord, Usage, measure_chars
 
 BENCHMARK = "SPY"
 
@@ -123,8 +124,16 @@ NARRATIVE_SYSTEM = (
 )
 
 
-def synthesize_narrative(decisions: list[Decision], opinions: list[dict]) -> str | None:
-    """One LLM call for the report's summary prose. Returns None on any failure."""
+def synthesize_narrative(
+    decisions: list[Decision], opinions: list[dict]
+) -> tuple[str | None, CallRecord]:
+    """One LLM call for the report's summary prose.
+
+    Returns (text, record). text is None on any failure — the narrative is
+    optional by design — but the record is always returned so the call shows up
+    in llm_calls either way. This call was previously unmeasured and is a real
+    share of the bill.
+    """
     import json
 
     import anthropic
@@ -139,6 +148,7 @@ def synthesize_narrative(decisions: list[Decision], opinions: list[dict]) -> str
         ],
         "opinions": opinions,
     }
+    chars = measure_chars(NARRATIVE_SYSTEM, payload)
     try:
         client = anthropic.Anthropic()
         response = client.messages.create(
@@ -147,8 +157,10 @@ def synthesize_narrative(decisions: list[Decision], opinions: list[dict]) -> str
             system=NARRATIVE_SYSTEM,
             messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         )
+        usage = Usage.from_response(response)
         if response.stop_reason == "refusal":
-            return None
-        return next((b.text for b in response.content if b.type == "text"), None)
+            return None, CallRecord(usage=usage, chars=chars, ok=False)
+        text = next((b.text for b in response.content if b.type == "text"), None)
+        return text, CallRecord(usage=usage, chars=chars, ok=text is not None)
     except Exception:  # noqa: BLE001 — narrative is optional by design
-        return None
+        return None, CallRecord(chars=chars, ok=False)

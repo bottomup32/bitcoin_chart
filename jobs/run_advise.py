@@ -27,6 +27,7 @@ from agents.context import (
     portfolio_context,
     tax_context,
 )
+from core.llm_log import CallRecord, measure_chars, record_call, usage_line
 from core.orchestrator import orchestrate, synthesize_narrative, tax_alerts
 from core.report import build_report
 from core.trade_date import latest_completed_session
@@ -132,12 +133,20 @@ def main() -> int:
         failed: list[str] = []
         for name, system, context in agent_calls:
             try:
-                opinions = run_agent(system, context)
+                opinions, record = run_agent(system, context)
                 n = save_opinions(cur, run_id, name, opinions)
+                record_call(cur, run_id=run_id, purpose=name, model_id=model_id(),
+                            prompt_version=PROMPT_VERSION, record=record)
                 conn.commit()
-                print(f"{name}: {n} opinions")
+                print(f"{name}: {n} opinions, {usage_line(record.usage)}")
             except Exception as exc:  # noqa: BLE001 — policy decides fatal vs degraded
                 conn.rollback()
+                # Log the failed call too: a refusal or a timeout still costs
+                # input tokens, and invisible failures under-report the bill.
+                record_call(cur, run_id=run_id, purpose=name, model_id=model_id(),
+                            prompt_version=PROMPT_VERSION,
+                            record=CallRecord(chars=measure_chars(system, context), ok=False))
+                conn.commit()
                 print(f"{name} failed: {type(exc).__name__}")
                 failed.append(name)
                 if name in CRITICAL_AGENTS:
@@ -170,7 +179,13 @@ def main() -> int:
         cur.execute("select max(created_at)::date from tax_lots")
         as_of = cur.fetchone()[0]
 
-        narrative = synthesize_narrative(decisions, opinion_rows) if decisions else None
+        narrative = None
+        if decisions:
+            narrative, record = synthesize_narrative(decisions, opinion_rows)
+            record_call(cur, run_id=run_id, purpose="narrative", model_id=model_id(),
+                        prompt_version=PROMPT_VERSION, record=record)
+            conn.commit()
+            print(f"narrative: {usage_line(record.usage)}")
         report_md = build_report(
             run_date=session,
             decisions=[
