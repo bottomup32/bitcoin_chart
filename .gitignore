@@ -11,3 +11,6 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+
+# knowledge corpus source material (may be copyrighted; see PLAN.md §6)
+knowledge/

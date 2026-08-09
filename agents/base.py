@@ -45,6 +45,11 @@ class Opinion(BaseModel):
     suggested_size_pct: float | None = Field(
         default=None, ge=0, le=100, description="Optional target portfolio weight in percent"
     )
+    used_knowledge_ids: list[int] = Field(
+        default_factory=list,
+        description="Ordinals from the `knowledge` block that actually changed this "
+                    "call; empty if none did. Do not cite a principle you merely read.",
+    )
 
 
 class OpinionSet(BaseModel):
@@ -96,22 +101,72 @@ def run_agent(
     return (parsed.opinions if parsed else []), record
 
 
-def save_opinions(cur, run_id: int, agent: str, opinions: list[Opinion]) -> int:
+def save_opinions(
+    cur,
+    run_id: int,
+    agent: str,
+    opinions: list[Opinion],
+    shown_chunks: list[dict] | None = None,
+) -> int:
+    """Persist opinions and, when knowledge was shown, what it was used for.
+
+    shown_chunks are the chunks this agent saw, in the order their ordinals were
+    presented, so ordinal N maps to shown_chunks[N-1]. Small local ordinals are
+    cheaper than DB ids in the prompt and remove the temptation to hallucinate
+    plausible-looking large integers.
+    """
     for op in opinions:
         cur.execute(
             """
             insert into agent_opinions
                 (run_id, agent, ticker, direction, confidence, timeframe,
-                 rationale, suggested_size_pct)
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+                 rationale, suggested_size_pct, ref_source_ids)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             on conflict (run_id, agent, ticker) do update
                 set direction = excluded.direction,
                     confidence = excluded.confidence,
                     timeframe = excluded.timeframe,
                     rationale = excluded.rationale,
-                    suggested_size_pct = excluded.suggested_size_pct
+                    suggested_size_pct = excluded.suggested_size_pct,
+                    ref_source_ids = excluded.ref_source_ids
+            returning id
             """,
             (run_id, agent, op.ticker.upper(), op.direction, op.confidence,
-             op.timeframe, op.rationale, op.suggested_size_pct),
+             op.timeframe, op.rationale, op.suggested_size_pct,
+             sorted(_cited_sources(op, shown_chunks))),
         )
+        opinion_id = cur.fetchone()[0]
+        _save_refs(cur, opinion_id, op, shown_chunks)
     return len(opinions)
+
+
+def _cited_chunks(op: Opinion, shown_chunks: list[dict] | None) -> list[dict]:
+    if not shown_chunks:
+        return []
+    return [
+        shown_chunks[n - 1]
+        for n in dict.fromkeys(op.used_knowledge_ids)  # dedupe, keep order
+        if 1 <= n <= len(shown_chunks)
+    ]
+
+
+def _cited_sources(op: Opinion, shown_chunks: list[dict] | None) -> set[int]:
+    return {c["source_id"] for c in _cited_chunks(op, shown_chunks)}
+
+
+def _save_refs(cur, opinion_id: int, op: Opinion, shown_chunks: list[dict] | None) -> None:
+    if not shown_chunks:
+        return
+    # A FORCE_ADVISE re-run may have retrieved a different set of chunks, so
+    # clear before rewriting rather than leaving a stale union behind.
+    cur.execute("delete from opinion_knowledge_refs where opinion_id = %s", (opinion_id,))
+    cited = {c["id"] for c in _cited_chunks(op, shown_chunks)}
+    for chunk in shown_chunks:
+        cur.execute(
+            """
+            insert into opinion_knowledge_refs (opinion_id, chunk_id, shown, cited)
+            values (%s, %s, true, %s)
+            on conflict (opinion_id, chunk_id) do update set cited = excluded.cited
+            """,
+            (opinion_id, chunk["id"], chunk["id"] in cited),
+        )

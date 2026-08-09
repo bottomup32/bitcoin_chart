@@ -165,6 +165,173 @@ def flip_rate(rows: list[dict]) -> float | None:
     return flips / pairs if pairs else None
 
 
+# ── knowledge retrieval ────────────────────────────────────────────────────
+
+# Every tag corresponds to something core/indicators.py, agents/context.py or
+# core/wash_sale.py already computes, so retrieval is a deterministic function
+# of code-computed state — auditable, replayable, and testable without a DB.
+#
+# This is why retrieval is tag matching rather than embeddings or full-text.
+# pgvector would mean a second vendor (Anthropic ships no embedding API), an
+# extra key and a per-chunk cost to do approximate nearest-neighbour over a
+# corpus of 50-300 chunks, where a GIN-indexed scan is exact and sub-millisecond.
+# Full-text needs a text query, but the trigger here is numeric market state;
+# manufacturing a query string out of it is just tag matching with a stemmer in
+# the way.
+DRAWDOWN_PCT = -0.10
+HIGH_VOL = 0.40
+HIGH_VOL_VS_BENCHMARK = 1.5
+CONCENTRATION_PCT = 20.0
+HIGH_CORRELATION = 0.8
+MOMENTUM_EXCESS = 0.05
+THIN_DATA_SESSIONS = 63
+
+# Tags with no computable trigger: always eligible, never forced.
+UNTRIGGERED_TAGS = frozenset({"position_sizing", "cash_reserve", "time_horizon"})
+
+# Which horizons each agent is actually scored on. The guard is load-bearing:
+# daily_signal is Brier-scored at 5 sessions (core/scoring.py), so handing it a
+# "our favourite holding period is forever" principle does not merely waste
+# tokens, it degrades a call that will be scored next week.
+AGENT_HORIZONS = {
+    "daily_signal": {"days", "weeks"},
+    "allocation": {"months", "quarters"},
+    "risk": {"weeks", "months"},
+    "tax": {"days", "weeks", "months"},
+}
+
+MAX_CHUNKS = 3
+SOURCE_SCORE_COEFFICIENT = 0.25
+
+
+def situation_tags(
+    market: dict,
+    portfolio: dict | None = None,
+    correlations: dict | None = None,
+    taxes: dict | None = None,
+) -> set[str]:
+    """Which knowledge tags today's code-computed state makes relevant. Pure."""
+    tags: set[str] = set(UNTRIGGERED_TAGS)
+    portfolio = portfolio or {}
+    taxes = taxes or {}
+
+    for summary in (market.get("tickers") or {}).values():
+        if not summary:
+            continue
+        drawdown = summary.get("pct_below_63d_high")
+        if drawdown is not None and drawdown <= DRAWDOWN_PCT:
+            tags.add("drawdown")
+
+        vol = summary.get("vol_21d_annualized")
+        bench_vol = (market.get("benchmark") or {}).get("vol_21d_annualized")
+        if vol is not None and (
+            vol >= HIGH_VOL
+            or (bench_vol and vol >= bench_vol * HIGH_VOL_VS_BENCHMARK)
+        ):
+            tags.add("high_volatility")
+
+        short, medium = summary.get("excess_vs_spy_5d"), summary.get("excess_vs_spy_21d")
+        if medium is not None and abs(medium) >= MOMENTUM_EXCESS:
+            tags.add("momentum")
+        if short is not None and medium is not None and short * medium < 0:
+            tags.add("mean_reversion")
+
+        sessions = summary.get("sessions_of_data")
+        if sessions is not None and sessions < THIN_DATA_SESSIONS:
+            tags.add("thin_data")
+
+    for position in portfolio.get("positions") or []:
+        weight = position.get("weight_pct")
+        if weight is not None and weight >= CONCENTRATION_PCT:
+            tags.add("concentration")
+
+    for ticker, row in (correlations or {}).items():
+        for other, value in (row or {}).items():
+            if other != ticker and value is not None and abs(value) >= HIGH_CORRELATION:
+                tags.add("correlation")
+
+    for lot in taxes.get("lots") or []:
+        pnl = lot.get("unrealized_pnl")
+        if pnl is not None and pnl < 0:
+            tags.add("unrealized_loss")
+        days = lot.get("days_to_longterm")
+        if days is not None and 0 < days <= 45:
+            tags.add("holding_period")
+    if taxes.get("wash_sale_risk"):
+        tags.add("wash_sale")
+
+    return tags
+
+
+def rank_chunks(
+    candidates: list[dict],
+    situation: set[str],
+    agent: str,
+    *,
+    budget_chars: int,
+    max_chunks: int = MAX_CHUNKS,
+    exposure: dict[int, int] | None = None,
+) -> list[dict]:
+    """Pick the chunks worth this agent's tokens today.
+
+    candidates: {id, source_id, body, tags, agents, horizons, char_len}.
+
+    Tag-match count dominates the score and the source's own weight is only a
+    0.25-coefficient tiebreak. That ordering is deliberate: letting a learned
+    weight drive retrieval creates a runaway — ranked high, so shown more, so
+    cited more, so ranked higher. The exploration slot is the other half of
+    that defence, guaranteeing under-exposed chunks keep entering the sample.
+    """
+    horizons = AGENT_HORIZONS.get(agent, set())
+    eligible = []
+    for chunk in candidates:
+        allowed = set(chunk.get("agents") or ())
+        if allowed and agent not in allowed:
+            continue
+        chunk_horizons = set(chunk.get("horizons") or ())
+        if chunk_horizons and horizons and not (chunk_horizons & horizons):
+            continue
+        overlap = set(chunk.get("tags") or ()) & situation
+        if not overlap:
+            continue
+        eligible.append((len(overlap), chunk))
+
+    def score(entry) -> tuple:
+        overlap, chunk = entry
+        return (-(overlap + SOURCE_SCORE_COEFFICIENT * float(chunk.get("source_score", 0.5))),
+                chunk["id"])
+
+    picked: list[dict] = []
+    used_sources: set[int] = set()
+    spent = 0
+    for _, chunk in sorted(eligible, key=score):
+        if len(picked) >= max_chunks:
+            break
+        if chunk["source_id"] in used_sources:  # diversity: one chunk per source
+            continue
+        size = chunk.get("char_len") or len(chunk["body"])
+        if spent + size > budget_chars:
+            continue
+        picked.append(chunk)
+        used_sources.add(chunk["source_id"])
+        spent += size
+
+    # Exploration: one extra seat for the least-exposed eligible chunk, so the
+    # attribution sample never collapses onto whatever ranked well early. It is
+    # additional to max_chunks rather than competing for those slots — ranking
+    # would otherwise fill every slot and the seat would never be used — and
+    # the char budget still caps what it can actually cost.
+    if exposure is not None:
+        chosen = {c["id"] for c in picked}
+        rest = [c for _, c in eligible if c["id"] not in chosen]
+        if rest:
+            least = min(rest, key=lambda c: (exposure.get(c["id"], 0), c["id"]))
+            size = least.get("char_len") or len(least["body"])
+            if spent + size <= budget_chars:
+                picked.append(least)
+    return picked
+
+
 # ── long-term memory ───────────────────────────────────────────────────────
 
 # Same constant, same meaning as jobs/run_evaluate.py:MIN_N_EFF, so the two

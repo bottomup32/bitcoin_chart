@@ -14,11 +14,16 @@ from __future__ import annotations
 import os
 from datetime import date
 
-from core.llm_log import LONG_TERM_KEY, SHORT_TERM_KEY
+from core.llm_log import KNOWLEDGE_KEY, LONG_TERM_KEY, SHORT_TERM_KEY
 from core.memory import (
+    AGENT_HORIZONS,
+    DEFAULT_BUDGETS,
+    ESTABLISHED_N_EFF,
     assert_as_of,
     compact_recent,
+    rank_chunks,
     resolution_counts,
+    situation_tags,
     trim_to_budget,
 )
 from core.scoring import TIMEFRAME_HORIZON
@@ -125,6 +130,83 @@ def recent_rows(
     return rows
 
 
+def knowledge_candidates(cur, tags: set[str]) -> list[dict]:
+    """Approved situational chunks whose tags overlap today's market state.
+
+    Filters on `approved` hard: an unreviewed chunk is a permanent daily token
+    cost and a permanent bias in every future decision.
+
+    source_score is the source's credibility_prior until that source has enough
+    evidence to have earned a learned weight — the gate is n_eff >= 30, which is
+    months away per source, and until then shrunk_skill would just return the
+    prior anyway.
+    """
+    if not tags:
+        return []
+    cur.execute(
+        """
+        select c.id, c.source_id, c.body, c.tags, c.agents, c.horizons, c.char_len,
+               coalesce(w.weight, s.credibility_prior) as source_score
+        from knowledge_chunks c
+        join sources s on s.id = c.source_id
+        left join lateral (
+            select weight from source_weights
+            where source_id = c.source_id and ticker is null
+              and coalesce(n_eff, 0) >= %s
+            order by coalesce(as_of_trade_date, effective_from::date) desc limit 1
+        ) w on true
+        where c.approved and c.layer = 'situational' and c.tags && %s
+        """,
+        (ESTABLISHED_N_EFF, list(tags)),
+    )
+    return [
+        {"id": r[0], "source_id": r[1], "body": r[2], "tags": r[3], "agents": r[4],
+         "horizons": r[5], "char_len": r[6], "source_score": float(r[7])}
+        for r in cur.fetchall()
+    ]
+
+
+def chunk_exposure(cur) -> dict[int, int]:
+    """How often each chunk has been shown — the exploration counter."""
+    cur.execute("select chunk_id, count(*) from opinion_knowledge_refs group by chunk_id")
+    return {chunk_id: count for chunk_id, count in cur.fetchall()}
+
+
+def core_knowledge(cur) -> list[str]:
+    """The shared, agent-agnostic principles that go in the system prompt.
+
+    Byte-identical across all four agents, which is what makes a cache_control
+    breakpoint worthwhile later: 1.25x once plus 0.1x three times beats 4x. That
+    is only wired up once the block clears Sonnet's 1024-token minimum cacheable
+    prefix — below it the marker is silently ignored.
+    """
+    cur.execute(
+        "select body from knowledge_chunks where approved and layer = 'core'"
+        " order by id"
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
+def with_core_knowledge(role_prompt: str, core: list[str]) -> str | list[dict]:
+    """Prefix the agent's role prompt with the shared core principles.
+
+    The core block comes FIRST and is byte-identical across agents, so it forms
+    a shared prefix. Anything volatile — dates, tickers, per-agent text — must
+    sit after it, which is exactly why short-term and long-term memory live in
+    the user context dict rather than here: putting them in `system` would
+    invalidate the prefix on every call.
+    """
+    if not core:
+        return role_prompt
+    principles = "\n".join(f"- {body}" for body in core)
+    return [
+        {"type": "text",
+         "text": "Investment principles this user endorses, which apply to every "
+                 f"call you make:\n{principles}"},
+        {"type": "text", "text": role_prompt},
+    ]
+
+
 def lesson_rows(cur, agent: str, tickers: list[str], as_of: date) -> list[str]:
     """This agent's durable lessons as they stood on as_of.
 
@@ -170,6 +252,14 @@ def memory_note(memory_block: dict) -> str | None:
             "`long_term` = lessons from your resolved calls. No entry for a "
             "ticker means no established track record; do not invent one."
         )
+    if memory_block.get(KNOWLEDGE_KEY):
+        parts.append(
+            "`knowledge` = investment principles this user endorses, selected "
+            "for today's market state. Apply them to the numbers you were "
+            "given, or ignore them if they do not fit. List the `n` of any "
+            "principle that actually changed a call in used_knowledge_ids — "
+            "leave it empty if none did."
+        )
     return " ".join(parts) or None
 
 
@@ -184,40 +274,73 @@ def merge(context: dict, memory_block: dict | None) -> dict:
     return merged
 
 
-def build_memory(cur, as_of: date, universe: list[str]) -> dict[str, dict]:
-    """Per-agent memory blocks, ready to merge into each agent's context.
+def knowledge_budget() -> int:
+    raw = os.environ.get("MEMORY_KNOWLEDGE_BUDGET_CHARS", "").strip()
+    return int(raw) if raw.isdigit() else DEFAULT_BUDGETS[KNOWLEDGE_KEY]
 
-    Returns {agent_name: block}. Absent or empty blocks are omitted entirely
-    rather than sent as nulls — an empty block costs tokens and teaches nothing.
+
+def build_memory(
+    cur,
+    as_of: date,
+    universe: list[str],
+    *,
+    market: dict | None = None,
+    portfolio: dict | None = None,
+    correlations: dict | None = None,
+    taxes: dict | None = None,
+) -> tuple[dict[str, dict], dict[str, list[dict]]]:
+    """Per-agent memory blocks, plus the chunks shown to each agent.
+
+    Returns ({agent: block}, {agent: shown_chunks}). The second value is what
+    save_opinions needs to turn an opinion's ordinals back into chunk ids.
+
+    Absent or empty blocks are omitted entirely rather than sent as nulls — an
+    empty block costs tokens and teaches nothing.
     """
     if not memory_enabled() or not universe:
-        return {}
+        return {}, {}
 
     session_dates = recent_sessions(cur, as_of, short_term_sessions())
-    if not session_dates:
-        return {}
+    tags = situation_tags(market or {}, portfolio, correlations, taxes)
+    candidates = knowledge_candidates(cur, tags) if market else []
+    exposure = chunk_exposure(cur) if candidates else {}
 
     memory: dict[str, dict] = {}
-    for agent in SCORABLE_AGENTS:
+    shown: dict[str, list[dict]] = {}
+    for agent in AGENT_HORIZONS:
         block: dict = {}
 
-        rows = recent_rows(cur, agent, universe, as_of, since=session_dates[-1])
-        recent = compact_recent(rows, session_dates)
-        if recent:
-            block[SHORT_TERM_KEY] = recent
-            counts = resolution_counts(rows)
-            if counts:
-                block["recent_summary"] = counts
+        if agent in SCORABLE_AGENTS and session_dates:
+            rows = recent_rows(cur, agent, universe, as_of, since=session_dates[-1])
+            recent = compact_recent(rows, session_dates)
+            if recent:
+                block[SHORT_TERM_KEY] = recent
+                counts = resolution_counts(rows)
+                if counts:
+                    block["recent_summary"] = counts
 
-        lessons = lesson_rows(cur, agent, universe, as_of)
-        if lessons:
-            block[LONG_TERM_KEY] = lessons
+            lessons = lesson_rows(cur, agent, universe, as_of)
+            if lessons:
+                block[LONG_TERM_KEY] = lessons
+
+        picked = rank_chunks(candidates, tags, agent,
+                             budget_chars=knowledge_budget(), exposure=exposure)
+        if picked:
+            # Local ordinals, not DB ids: fewer tokens, and nothing to
+            # hallucinate. save_opinions maps ordinal N back to picked[N-1].
+            block[KNOWLEDGE_KEY] = [
+                {"n": i, "principle": chunk["body"]}
+                for i, chunk in enumerate(picked, start=1)
+            ]
+            shown[agent] = picked
 
         if not block:
             continue
         trimmed, dropped = trim_to_budget(block)
         if dropped:
             print(f"memory[{agent}]: dropped over-budget blocks: {','.join(dropped)}")
+            if KNOWLEDGE_KEY in dropped:
+                shown.pop(agent, None)  # never log an exposure the agent never saw
         if trimmed:
             memory[agent] = trimmed
-    return memory
+    return memory, shown

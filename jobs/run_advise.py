@@ -15,6 +15,7 @@ never holdings or report contents (PLAN.md §6).
 
 from __future__ import annotations
 
+import json
 import os
 
 from adapters.resend_email import send_email
@@ -27,7 +28,7 @@ from agents.context import (
     portfolio_context,
     tax_context,
 )
-from agents.memory import build_memory
+from agents.memory import build_memory, core_knowledge, with_core_knowledge
 from core.llm_log import CallRecord, measure_chars, record_call, usage_line
 from core.orchestrator import orchestrate, synthesize_narrative, tax_alerts
 from core.report import build_report
@@ -124,9 +125,19 @@ def main() -> int:
         held = sorted(t for t, origin in universe.items() if origin == "holding")
         correlations = correlation_context(cur, held) if len(held) > 1 else {}
 
-        # Memory: each agent's own recent calls and how they resolved, filtered
-        # to what was knowable on this session (agents/memory.py).
-        memory = build_memory(cur, session, sorted(universe))
+        # Memory: each agent's own recent calls and how they resolved, the
+        # lessons drawn from them, and the endorsed principles today's market
+        # state makes relevant — all filtered to what was knowable on this
+        # session (agents/memory.py).
+        memory, shown = build_memory(
+            cur, session, sorted(universe),
+            market=market, portfolio=portfolio,
+            correlations=correlations, taxes=taxes,
+        )
+        # Shared across all four agents, so it is a candidate for a
+        # cache_control breakpoint once it clears Sonnet's 1024-token minimum.
+        core = core_knowledge(cur)
+        core_chars = len(json.dumps(core, ensure_ascii=False)) if core else 0
 
         agent_calls = [
             (daily_signal.NAME, daily_signal.SYSTEM,
@@ -139,10 +150,13 @@ def main() -> int:
         ]
 
         failed: list[str] = []
-        for name, system, context in agent_calls:
+        for name, role_prompt, context in agent_calls:
+            system = with_core_knowledge(role_prompt, core)
             try:
-                opinions, record = run_agent(system, context)
-                n = save_opinions(cur, run_id, name, opinions)
+                opinions, record = run_agent(
+                    system, context, system_knowledge_chars=core_chars
+                )
+                n = save_opinions(cur, run_id, name, opinions, shown.get(name))
                 record_call(cur, run_id=run_id, purpose=name, model_id=model_id(),
                             prompt_version=PROMPT_VERSION, record=record)
                 conn.commit()
@@ -153,7 +167,10 @@ def main() -> int:
                 # input tokens, and invisible failures under-report the bill.
                 record_call(cur, run_id=run_id, purpose=name, model_id=model_id(),
                             prompt_version=PROMPT_VERSION,
-                            record=CallRecord(chars=measure_chars(system, context), ok=False))
+                            record=CallRecord(
+                                chars=measure_chars(system, context,
+                                                    system_knowledge_chars=core_chars),
+                                ok=False))
                 conn.commit()
                 print(f"{name} failed: {type(exc).__name__}")
                 failed.append(name)
