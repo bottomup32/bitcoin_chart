@@ -5,6 +5,7 @@ outcomes, so it is excluded from Brier-based weight learning in v1.
 """
 
 from agents.base import DISCLAIMER
+from agents.memory import merge
 
 NAME = "tax"
 
@@ -36,5 +37,8 @@ Guidelines:
 """
 
 
-def build_context(cur, tax: dict) -> dict:
-    return {"task": "Give tax-positioning opinions for held tickers with a tax angle.", **tax}
+def build_context(cur, tax: dict, memory: dict | None = None) -> dict:
+    return merge(
+        {"task": "Give tax-positioning opinions for held tickers with a tax angle.", **tax},
+        memory,
+    )

@@ -27,6 +27,7 @@ from agents.context import (
     portfolio_context,
     tax_context,
 )
+from agents.memory import build_memory
 from core.llm_log import CallRecord, measure_chars, record_call, usage_line
 from core.orchestrator import orchestrate, synthesize_narrative, tax_alerts
 from core.report import build_report
@@ -123,11 +124,18 @@ def main() -> int:
         held = sorted(t for t, origin in universe.items() if origin == "holding")
         correlations = correlation_context(cur, held) if len(held) > 1 else {}
 
+        # Memory: each agent's own recent calls and how they resolved, filtered
+        # to what was knowable on this session (agents/memory.py).
+        memory = build_memory(cur, session, sorted(universe))
+
         agent_calls = [
-            (daily_signal.NAME, daily_signal.SYSTEM, daily_signal.build_context(cur, market)),
-            (allocation.NAME, allocation.SYSTEM, allocation.build_context(cur, market, portfolio)),
-            (risk.NAME, risk.SYSTEM, risk.build_context(cur, market, portfolio, correlations)),
-            (tax.NAME, tax.SYSTEM, tax.build_context(cur, taxes)),
+            (daily_signal.NAME, daily_signal.SYSTEM,
+             daily_signal.build_context(cur, market, memory.get(daily_signal.NAME))),
+            (allocation.NAME, allocation.SYSTEM,
+             allocation.build_context(cur, market, portfolio, memory.get(allocation.NAME))),
+            (risk.NAME, risk.SYSTEM,
+             risk.build_context(cur, market, portfolio, correlations, memory.get(risk.NAME))),
+            (tax.NAME, tax.SYSTEM, tax.build_context(cur, taxes, memory.get(tax.NAME))),
         ]
 
         failed: list[str] = []

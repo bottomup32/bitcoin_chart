@@ -1,6 +1,7 @@
 """Daily Signal Agent — short-term (days~weeks) technical view (PLAN.md §1 [3])."""
 
 from agents.base import CONFIDENCE_RULE, DISCLAIMER
+from agents.memory import merge
 
 NAME = "daily_signal"
 
@@ -23,5 +24,8 @@ Guidelines:
 """
 
 
-def build_context(cur, market: dict) -> dict:
-    return {"task": "Give one short-term opinion per ticker in `tickers`.", **market}
+def build_context(cur, market: dict, memory: dict | None = None) -> dict:
+    return merge(
+        {"task": "Give one short-term opinion per ticker in `tickers`.", **market},
+        memory,
+    )

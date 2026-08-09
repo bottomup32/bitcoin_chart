@@ -6,6 +6,7 @@ is avoiding drawdowns, not predicting returns.
 """
 
 from agents.base import DISCLAIMER
+from agents.memory import merge
 
 NAME = "risk"
 
@@ -31,10 +32,16 @@ Guidelines:
 """
 
 
-def build_context(cur, market: dict, portfolio: dict, correlations: dict) -> dict:
-    return {
-        "task": "Assess risk for each held ticker; trim/sell reduces exposure, hold accepts it.",
-        "portfolio": portfolio,
-        "correlation_matrix_63d": correlations,
-        **market,
-    }
+def build_context(
+    cur, market: dict, portfolio: dict, correlations: dict, memory: dict | None = None
+) -> dict:
+    return merge(
+        {
+            "task": "Assess risk for each held ticker; trim/sell reduces exposure, "
+                    "hold accepts it.",
+            "portfolio": portfolio,
+            "correlation_matrix_63d": correlations,
+            **market,
+        },
+        memory,
+    )

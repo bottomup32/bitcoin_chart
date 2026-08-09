@@ -1,6 +1,7 @@
 """Mid/Long-term Allocation Agent — months~quarters portfolio balance (PLAN.md §1 [3])."""
 
 from agents.base import CONFIDENCE_RULE, DISCLAIMER
+from agents.memory import merge
 
 NAME = "allocation"
 
@@ -23,9 +24,12 @@ Guidelines:
 """
 
 
-def build_context(cur, market: dict, portfolio: dict) -> dict:
-    return {
-        "task": "Give one medium/long-term allocation opinion per held ticker.",
-        "portfolio": portfolio,
-        **market,
-    }
+def build_context(cur, market: dict, portfolio: dict, memory: dict | None = None) -> dict:
+    return merge(
+        {
+            "task": "Give one medium/long-term allocation opinion per held ticker.",
+            "portfolio": portfolio,
+            **market,
+        },
+        memory,
+    )
