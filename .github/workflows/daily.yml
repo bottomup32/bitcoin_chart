@@ -89,3 +89,11 @@ jobs:
         run: uv run python -m jobs.run_evaluate
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+
+      # Zero LLM calls: distils today's evaluations into durable lessons that
+      # feed TOMORROW's advise run. Writes only when the evidence moved.
+      - name: Reflect (distil lessons from outcomes)
+        if: ${{ !inputs.email_only }}
+        run: uv run python -m jobs.run_reflect
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}

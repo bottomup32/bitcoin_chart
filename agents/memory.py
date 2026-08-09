@@ -30,16 +30,14 @@ SCORABLE_AGENTS = ("daily_signal", "allocation", "fundamental")
 
 DEFAULT_SESSIONS = 8
 
-# What each column in a compact `recent` row means. Sent once per prompt rather
-# than as repeated JSON keys on every row.
+# Glosses for the compact `recent` columns — only the ones whose names are not
+# self-explanatory. `cols` already carries the field names, and this text ships
+# on every call, so anything obvious from the name is pure overhead.
 RECENT_FIELD_DOC = (
-    "ago = sessions ago",
-    "dir = your direction",
-    "conf = your confidence",
-    "tf = timeframe (d/w/m/q)",
-    "excess = realized return minus SPY",
-    "hit = whether it cleared the bar",
-    "orch = what the orchestrator decided",
+    "ago=sessions back",
+    "excess=return minus SPY",
+    "hit=cleared the bar",
+    "orch=orchestrator's decision",
 )
 
 # Built from TIMEFRAME_HORIZON so the mapping has exactly one definition
@@ -127,6 +125,31 @@ def recent_rows(
     return rows
 
 
+def lesson_rows(cur, agent: str, tickers: list[str], as_of: date) -> list[str]:
+    """This agent's durable lessons as they stood on as_of.
+
+    Supersede semantics come free from the as-of ordering: the newest row per
+    (agent, ticker) that was knowable on the session. agent_lessons is
+    append-only and has no superseded_at column by design — see 0005.
+    """
+    cur.execute(
+        """
+        select distinct on (ticker) ticker, body, as_of_trade_date
+        from agent_lessons
+        where agent = %s
+          and (ticker is null or ticker = any(%s))
+          and as_of_trade_date <= %s
+        order by ticker, as_of_trade_date desc
+        """,
+        (agent, list(tickers), as_of),
+    )
+    rows = cur.fetchall()
+    assert_as_of(
+        [{"as_of": r[2]} for r in rows], as_of, where=f"long_term[{agent}]"
+    )
+    return [r[1] for r in rows]
+
+
 def memory_note(memory_block: dict) -> str | None:
     """The one instruction that keeps recall from becoming anchoring.
 
@@ -137,17 +160,15 @@ def memory_note(memory_block: dict) -> str | None:
     parts: list[str] = []
     if memory_block.get(SHORT_TERM_KEY):
         parts.append(
-            "`recent` lists your own prior calls for these tickers "
-            f"[{'; '.join(RECENT_FIELD_DOC)}]. `excess` and `hit` are null while "
-            "the horizon is still open. They are context for consistency, not a "
-            "commitment — if today's data contradicts a prior call, change it "
-            "and say why."
+            f"`recent` = your own prior calls ({', '.join(RECENT_FIELD_DOC)}); "
+            "null excess/hit means that horizon is still open. Context for "
+            "consistency, not a commitment — if today's data contradicts a "
+            "prior call, change it and say why."
         )
     if LONG_TERM_KEY in memory_block:
         parts.append(
-            "`long_term` holds lessons drawn from your resolved calls. A ticker "
-            "with no entry means you have no established track record on it; do "
-            "not speculate about one."
+            "`long_term` = lessons from your resolved calls. No entry for a "
+            "ticker means no established track record; do not invent one."
         )
     return " ".join(parts) or None
 
@@ -178,14 +199,22 @@ def build_memory(cur, as_of: date, universe: list[str]) -> dict[str, dict]:
 
     memory: dict[str, dict] = {}
     for agent in SCORABLE_AGENTS:
+        block: dict = {}
+
         rows = recent_rows(cur, agent, universe, as_of, since=session_dates[-1])
         recent = compact_recent(rows, session_dates)
-        if not recent:
+        if recent:
+            block[SHORT_TERM_KEY] = recent
+            counts = resolution_counts(rows)
+            if counts:
+                block["recent_summary"] = counts
+
+        lessons = lesson_rows(cur, agent, universe, as_of)
+        if lessons:
+            block[LONG_TERM_KEY] = lessons
+
+        if not block:
             continue
-        block: dict = {SHORT_TERM_KEY: recent}
-        counts = resolution_counts(rows)
-        if counts:
-            block["recent_summary"] = counts
         trimmed, dropped = trim_to_budget(block)
         if dropped:
             print(f"memory[{agent}]: dropped over-budget blocks: {','.join(dropped)}")

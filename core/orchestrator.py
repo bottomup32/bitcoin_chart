@@ -34,13 +34,32 @@ def flags_from_lots(lots: list[dict], wash_risk: dict[str, str]) -> dict[str, Ta
     return flags
 
 
-def latest_agent_weights(cur) -> dict[str, float]:
-    cur.execute(
-        """
-        select distinct on (agent) agent, weight
-        from agent_weights order by agent, effective_from desc
-        """
-    )
+def latest_agent_weights(cur, as_of: date | None = None) -> dict[str, float]:
+    """Each agent's weight as it stood on `as_of`.
+
+    The as-of filter matters for replay, not for the live path: run_evaluate
+    runs after run_advise on the same day, but re-running an old session with
+    FORCE_ADVISE=1 would otherwise decide it using weights learned afterwards.
+    coalesce covers rows written before 0004 backfilled the column.
+    """
+    if as_of is None:
+        cur.execute(
+            """
+            select distinct on (agent) agent, weight
+            from agent_weights order by agent, effective_from desc
+            """
+        )
+    else:
+        cur.execute(
+            """
+            select distinct on (agent) agent, weight
+            from agent_weights
+            where coalesce(as_of_trade_date, effective_from::date) <= %s
+            order by agent, coalesce(as_of_trade_date, effective_from::date) desc,
+                     effective_from desc
+            """,
+            (as_of,),
+        )
     return {agent: float(w) for agent, w in cur.fetchall()}
 
 
@@ -60,7 +79,7 @@ def orchestrate(cur, run_id: int, run_date: date, tax_ctx: dict) -> tuple[list[D
                          confidence=float(confidence), timeframe=timeframe)
         )
 
-    weights = latest_agent_weights(cur)
+    weights = latest_agent_weights(cur, run_date)
     flags = flags_from_lots(tax_ctx["lots"], tax_ctx["wash_sale_risk"])
 
     cur.execute(

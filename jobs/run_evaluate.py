@@ -193,7 +193,7 @@ def update_weights(cur) -> int:
     for agent in SCORABLE_AGENTS:
         cur.execute(
             """
-            select e.brier, e.horizon
+            select e.brier, e.horizon, e.eval_trade_date
             from sim_evaluations e
             join agent_opinions o on o.id = e.opinion_id
             where o.agent = %s and e.brier is not null
@@ -205,10 +205,13 @@ def update_weights(cur) -> int:
         rows = cur.fetchall()
         if not rows:
             continue
-        briers = [float(b) for b, _ in rows]
+        briers = [float(b) for b, _, _ in rows]
         raw_skill = 1.0 - sum(briers) / len(briers)
-        n_eff = sum(1.0 / HORIZON_DAYS[h] for _, h in rows)
+        n_eff = sum(1.0 / HORIZON_DAYS[h] for _, h, _ in rows)
         posterior = shrunk_skill(raw_skill, n_eff)
+        # The knowledge frontier this weight was computed from — what a replay
+        # of an earlier session must not be allowed to see.
+        as_of = max(d for _, _, d in rows)
 
         cur.execute(
             """
@@ -228,10 +231,10 @@ def update_weights(cur) -> int:
         if row is None or abs(new - previous) > 1e-4:
             cur.execute(
                 """
-                insert into agent_weights (agent, weight, sample_n, n_eff)
-                values (%s, %s, %s, %s)
+                insert into agent_weights (agent, weight, sample_n, n_eff, as_of_trade_date)
+                values (%s, %s, %s, %s, %s)
                 """,
-                (agent, round(new, 4), len(rows), round(n_eff, 2)),
+                (agent, round(new, 4), len(rows), round(n_eff, 2), as_of),
             )
             updated += 1
     return updated
