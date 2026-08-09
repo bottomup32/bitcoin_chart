@@ -62,12 +62,15 @@ jobs:
           REPORT_EMAIL_TO: ${{ vars.REPORT_EMAIL_TO }}
           REPORT_EMAIL_FROM: ${{ vars.REPORT_EMAIL_FROM }}
 
-      - name: Ingest prices
+      # Also pulls per-ticker RSS headlines. News failures never fail the run:
+      # a feed outage must not roll back a good price ingest.
+      - name: Ingest prices and news
         if: ${{ !inputs.email_only }}
         run: uv run python -m jobs.run_ingest
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           WATCHLIST: ${{ vars.WATCHLIST }}
+          NEWS_ENABLED: ${{ vars.NEWS_ENABLED }}
 
       # Skips itself with exit 0 until the ANTHROPIC_API_KEY secret is set.
       - name: Run analysis agents
@@ -82,6 +85,9 @@ jobs:
           REPORT_EMAIL_TO: ${{ vars.REPORT_EMAIL_TO }}
           REPORT_EMAIL_FROM: ${{ vars.REPORT_EMAIL_FROM }}
           FORCE_ADVISE: ${{ inputs.force }}
+          MEMORY_ENABLED: ${{ vars.MEMORY_ENABLED }}
+          MEMORY_SHORT_TERM_SESSIONS: ${{ vars.MEMORY_SHORT_TERM_SESSIONS }}
+          NEWS_ENABLED: ${{ vars.NEWS_ENABLED }}
 
       # Missing-scan driven: catches up on any prior days automatically.
       - name: Paper fills, scoring, weight updates

@@ -35,6 +35,11 @@ SCORABLE_AGENTS = ("daily_signal", "allocation", "fundamental")
 
 DEFAULT_SESSIONS = 8
 
+# Headlines per ticker. News is perishable and repetitive, so a few recent ones
+# carry nearly all the signal; more is mostly restatement at daily cost.
+NEWS_PER_TICKER = 4
+NEWS_KEY = "news"
+
 # Glosses for the compact `recent` columns — only the ones whose names are not
 # self-explanatory. `cols` already carries the field names, and this text ships
 # on every call, so anything obvious from the name is pure overhead.
@@ -187,6 +192,45 @@ def core_knowledge(cur) -> list[str]:
     return [row[0] for row in cur.fetchall()]
 
 
+def news_enabled() -> bool:
+    return os.environ.get("NEWS_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+
+
+def news_rows(cur, tickers: list[str], as_of: date, sessions_back: int = 3) -> dict:
+    """Recent headlines per ticker, nothing published after the session.
+
+    published_at <= end of as_of is the whole reason this is RSS and not a
+    web-search tool: it makes news filterable by the same as-of rule as
+    everything else, so an old session replays with the news it actually had.
+
+    Compact encoding for the same reason short-term memory uses one: this ships
+    on every call, and repeated JSON keys are paid per row.
+    """
+    if not news_enabled() or not tickers:
+        return {}
+    cur.execute(
+        """
+        select ticker, title, summary, published_at::date
+        from news_items
+        where ticker = any(%s)
+          and published_at < (%s::date + 1)
+          and published_at >= (%s::date - %s)
+        order by ticker, published_at desc
+        """,
+        (list(tickers), as_of, as_of, sessions_back),
+    )
+    rows = cur.fetchall()
+    assert_as_of([{"published": r[3]} for r in rows], as_of, where="news")
+
+    out: dict[str, list] = {}
+    for ticker, title, summary, published in rows:
+        bucket = out.setdefault(ticker, [])
+        if len(bucket) >= NEWS_PER_TICKER:
+            continue
+        bucket.append([(as_of - published).days, title, summary or None])
+    return {"cols": ["days_ago", "headline", "summary"], **out} if out else {}
+
+
 def with_core_knowledge(role_prompt: str, core: list[str]) -> str | list[dict]:
     """Prefix the agent's role prompt with the shared core principles.
 
@@ -252,6 +296,13 @@ def memory_note(memory_block: dict) -> str | None:
             "`long_term` = lessons from your resolved calls. No entry for a "
             "ticker means no established track record; do not invent one."
         )
+    if memory_block.get(NEWS_KEY):
+        parts.append(
+            "`news` = recent headlines per ticker (days_ago, headline, summary). "
+            "Headlines are not verified facts and are often already priced in — "
+            "treat them as context for the numbers, never as a reason to "
+            "override them."
+        )
     if memory_block.get(KNOWLEDGE_KEY):
         parts.append(
             "`knowledge` = investment principles this user endorses, selected "
@@ -304,6 +355,7 @@ def build_memory(
     tags = situation_tags(market or {}, portfolio, correlations, taxes)
     candidates = knowledge_candidates(cur, tags) if market else []
     exposure = chunk_exposure(cur) if candidates else {}
+    news = news_rows(cur, universe, as_of)
 
     memory: dict[str, dict] = {}
     shown: dict[str, list[dict]] = {}
@@ -322,6 +374,9 @@ def build_memory(
             lessons = lesson_rows(cur, agent, universe, as_of)
             if lessons:
                 block[LONG_TERM_KEY] = lessons
+
+        if news:
+            block[NEWS_KEY] = news
 
         picked = rank_chunks(candidates, tags, agent,
                              budget_chars=knowledge_budget(), exposure=exposure)

@@ -19,6 +19,8 @@ import json
 import os
 from datetime import date, timedelta
 
+from adapters.news_rss import SOURCE_NAME as NEWS_SOURCE
+from adapters.news_rss import fetch_news
 from adapters.prices import PriceRecord, fetch_stooq, fetch_yfinance
 from core.trade_date import latest_completed_session, sessions_between
 from db.client import get_conn
@@ -84,6 +86,45 @@ def _archive(cur, source_name: str, session: date, tickers: list[str], n_rows: i
     )
 
 
+def news_enabled() -> bool:
+    return os.environ.get("NEWS_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _ingest_news(cur, conn, tickers: list[str], session: date) -> int:
+    """Store per-ticker headlines. Never fails the run — news is optional.
+
+    Separate commit from prices: a feed outage must not roll back a successful
+    price ingest, which is the part the rest of the pipeline depends on.
+    """
+    if not news_enabled():
+        return 0
+    subjects = [t for t in tickers if t != BENCHMARK]
+    if not subjects:
+        return 0
+    try:
+        items, failed = fetch_news(subjects, session)
+    except Exception as exc:  # noqa: BLE001
+        print(f"news fetch failed ({type(exc).__name__}); continuing without news")
+        return 0
+
+    stored = 0
+    for item in items:
+        cur.execute(
+            """
+            insert into news_items (ticker, title, summary, url, published_at, source)
+            values (%s, %s, %s, %s, %s, %s)
+            on conflict (ticker, source, title, published_at) do nothing
+            """,
+            (item.ticker, item.title, item.summary, item.url,
+             item.published_at, NEWS_SOURCE),
+        )
+        stored += cur.rowcount
+    conn.commit()
+    print(f"news: {stored} new headlines from {len(items)} items"
+          + (f", {len(failed)} tickers failed" if failed else ""))
+    return stored
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backfill-days", type=int, default=DEFAULT_BACKFILL_DAYS)
@@ -136,6 +177,8 @@ def main() -> int:
         if fallback_rows:
             _archive(cur, "stooq", session, missing, fallback_rows)
         conn.commit()
+
+        _ingest_news(cur, conn, tickers, session)
 
         expected = set(sessions_between(max(fetch_start, session - timedelta(days=7)), session))
         got_today = {r.ticker for r in records if r.trade_date == session}

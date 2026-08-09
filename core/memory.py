@@ -31,6 +31,7 @@ TIMEFRAME_CODE = {"days": "d", "weeks": "w", "months": "m", "quarters": "q"}
 # for this date- and digit-heavy JSON, so these sit a little under the token
 # budgets in the plan. Trim order matters — see trim_to_budget.
 DEFAULT_BUDGETS = {
+    "news": 900,
     "knowledge": 1200,
     "recent": 1000,
     "long_term": 600,
@@ -40,7 +41,7 @@ DEFAULT_BUDGETS = {
 # empty (below the evidence gate) and high-evidence when present; short-term is
 # the cheapest per unit of decision relevance and is the entire anti-whipsaw
 # mechanism. So sacrifice them in that order.
-TRIM_ORDER = ("knowledge", "long_term", SHORT_TERM_KEY)
+TRIM_ORDER = ("news", "knowledge", "long_term", SHORT_TERM_KEY)
 
 
 class LookAheadError(AssertionError):
