@@ -21,10 +21,16 @@ from __future__ import annotations
 from datetime import date
 
 from core.memory import flip_rate, lesson_stats, render_lesson
-from core.scoring import TIMEFRAME_HORIZON
+from core.scoring import HORIZON_DAYS, TIMEFRAME_HORIZON, ema, shrunk_skill
 from db.client import get_conn
+from jobs.run_evaluate import (
+    MAX_STEP_SMALL_SAMPLE as MAX_STEP,
+    MIN_N_EFF,
+    SCORABLE_AGENTS,
+    WEIGHT_CEIL,
+    WEIGHT_FLOOR,
+)
 
-SCORABLE_AGENTS = ("daily_signal", "allocation", "fundamental")
 MAX_SAMPLE = 200
 
 
@@ -111,6 +117,120 @@ def write_lessons(cur, as_of: date) -> tuple[int, int]:
     return written, considered
 
 
+def update_source_weights(cur, as_of: date) -> int:
+    """Learn which endorsed philosophies actually help. Same shape as weights.
+
+    Deliberately mirrors jobs/run_evaluate.py:update_weights and reuses
+    core/scoring.py unchanged, so the two learning paths cannot diverge.
+
+    This is statistically hopeless for months and the code should say so: with
+    two tickers and roughly two scorable opinions a day, a single source needs
+    ~75 sessions to reach n_eff 30 at the 5d horizon. Until then shrunk_skill
+    correctly returns the credibility_prior. The plumbing exists so evidence
+    accrues; knowledge_candidates() still ignores these weights until the gate
+    passes, so nothing here can bias retrieval in the meantime.
+    """
+    cur.execute(
+        """
+        select c.source_id, o.ticker, e.brier, e.horizon, e.eval_trade_date,
+               s.credibility_prior
+        from opinion_knowledge_refs k
+        join knowledge_chunks c on c.id = k.chunk_id
+        join sources s on s.id = c.source_id
+        join agent_opinions o on o.id = k.opinion_id
+        join sim_evaluations e on e.opinion_id = o.id
+        where k.cited
+          and o.agent = any(%s)
+          and e.brier is not null
+          and e.eval_trade_date is not null
+          and e.eval_trade_date <= %s
+        """,
+        (list(SCORABLE_AGENTS), as_of),
+    )
+    samples: dict[tuple[int, str | None], list[tuple]] = {}
+    for source_id, ticker, brier, horizon, eval_date, prior in cur.fetchall():
+        row = (float(brier), horizon, eval_date, float(prior))
+        samples.setdefault((source_id, ticker), []).append(row)
+        samples.setdefault((source_id, None), []).append(row)  # source-level rollup
+
+    written = 0
+    for (source_id, ticker), rows in sorted(
+        samples.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
+    ):
+        prior = rows[0][3]
+        frontier_date = max(d for _, _, d, _ in rows)
+
+        cur.execute(
+            """
+            select weight, sample_n, as_of_trade_date from source_weights
+            where source_id = %s and ticker is not distinct from %s
+            order by effective_from desc limit 1
+            """,
+            (source_id, ticker),
+        )
+        row = cur.fetchone()
+        # Unchanged evidence must not move the weight. Without this the EMA
+        # creeps toward the posterior a little every run, silently drifting the
+        # weight — and writing a row a day — on no new information at all.
+        if row is not None and row[1] == len(rows) and row[2] == frontier_date:
+            continue
+
+        raw_skill = 1.0 - sum(b for b, _, _, _ in rows) / len(rows)
+        n_eff = sum(1.0 / HORIZON_DAYS[h] for _, h, _, _ in rows)
+        posterior = shrunk_skill(raw_skill, n_eff, prior_skill=prior)
+        previous = float(row[0]) if row else prior
+
+        new = ema(previous, posterior)
+        if n_eff < MIN_N_EFF:
+            new = max(previous - MAX_STEP, min(previous + MAX_STEP, new))
+        new = max(WEIGHT_FLOOR, min(WEIGHT_CEIL, new))
+
+        if row is not None and abs(new - previous) <= 1e-4:
+            continue
+        cur.execute(
+            """
+            insert into source_weights
+                (source_id, ticker, weight, sample_n, n_eff, as_of_trade_date)
+            values (%s, %s, %s, %s, %s, %s)
+            """,
+            (source_id, ticker, round(new, 4), len(rows), round(n_eff, 2), frontier_date),
+        )
+        written += 1
+    return written
+
+
+def report_knowledge_exposure(cur) -> None:
+    """Per-source exposure and citation rate.
+
+    Both extremes mean the attribution signal is worthless: a citation rate near
+    zero means nothing is being attributed, near one means the agents cite
+    whatever they are shown. Reported as a rate so either is visible early.
+    """
+    cur.execute(
+        """
+        select s.name, count(*) as shown, count(*) filter (where k.cited) as cited,
+               max(w.n_eff) as n_eff
+        from opinion_knowledge_refs k
+        join knowledge_chunks c on c.id = k.chunk_id
+        join sources s on s.id = c.source_id
+        left join source_weights w on w.source_id = s.id and w.ticker is null
+        group by s.name order by s.name
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return
+    print(f"\n{'source':<32} {'shown':>6} {'cited':>6} {'rate':>6} {'n_eff':>7}")
+    for name, shown, cited, n_eff in rows:
+        rate = cited / shown if shown else 0.0
+        flag = ""
+        if shown >= 20 and (rate < 0.02 or rate > 0.98):
+            flag = "  <- degenerate citation rate; attribution is uninformative"
+        print(f"{name:<32} {shown:>6} {cited:>6} {rate:>6.2f} "
+              f"{float(n_eff or 0):>7.1f}{flag}")
+    print(f"source weights stay advisory until n_eff >= {MIN_N_EFF}")
+
+
 def report_flip_rates(cur, as_of: date) -> None:
     """The anchoring diagnostic — memory's one failure mode that looks like success.
 
@@ -143,12 +263,15 @@ def main() -> int:
             return 0
 
         written, considered = write_lessons(cur, as_of)
+        sources = update_source_weights(cur, as_of)
         conn.commit()
         print(f"reflect {as_of}: {written} lessons written, "
-              f"{considered} (agent, ticker) pairs considered")
+              f"{considered} (agent, ticker) pairs considered, "
+              f"{sources} source weights updated")
         if written == 0 and considered:
             print("no lesson cleared the evidence bar — expected until n_eff builds up")
         report_flip_rates(cur, as_of)
+        report_knowledge_exposure(cur)
     return 0
 
 

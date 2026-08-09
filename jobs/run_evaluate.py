@@ -205,22 +205,29 @@ def update_weights(cur) -> int:
         rows = cur.fetchall()
         if not rows:
             continue
-        briers = [float(b) for b, _, _ in rows]
-        raw_skill = 1.0 - sum(briers) / len(briers)
-        n_eff = sum(1.0 / HORIZON_DAYS[h] for _, h, _ in rows)
-        posterior = shrunk_skill(raw_skill, n_eff)
-        # The knowledge frontier this weight was computed from — what a replay
-        # of an earlier session must not be allowed to see.
+        # The knowledge frontier this weight is computed from — what a replay of
+        # an earlier session must not be allowed to see.
         as_of = max(d for _, _, d in rows)
 
         cur.execute(
             """
-            select weight from agent_weights where agent = %s
+            select weight, sample_n, as_of_trade_date from agent_weights where agent = %s
             order by effective_from desc limit 1
             """,
             (agent,),
         )
         row = cur.fetchone()
+        # Per-agent guard on unchanged evidence. The caller's `if n_op` gate is
+        # global, so on a day when one agent gained evaluations and another did
+        # not, the second agent's EMA would still creep toward its posterior on
+        # exactly the same sample.
+        if row is not None and row[1] == len(rows) and row[2] == as_of:
+            continue
+
+        briers = [float(b) for b, _, _ in rows]
+        raw_skill = 1.0 - sum(briers) / len(briers)
+        n_eff = sum(1.0 / HORIZON_DAYS[h] for _, h, _ in rows)
+        posterior = shrunk_skill(raw_skill, n_eff)
         previous = float(row[0]) if row else DEFAULT_WEIGHT
 
         new = ema(previous, posterior)
