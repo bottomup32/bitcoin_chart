@@ -1,6 +1,7 @@
 # secrets & local env
 .env
 .env.*
+!.env.example
 
 # portfolio data must never be committed (see PLAN.md §6)
 *.csv
