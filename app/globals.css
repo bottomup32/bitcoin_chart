@@ -1,0 +1,242 @@
+/* ============================================================
+   TecAce Dashboard Theme — shadcn/ui (Tailwind CSS v4)
+   Source of truth: TECACE DESIGN SYSTEM_JULY.fig (2026-08 guide)
+   Brand primary: #116DFF  (NOT #3366FF — that value in the repo's
+   fig-tokens.css is a known extraction bug; this file is corrected.)
+
+   Usage:
+   - Drop this file in as your app's global stylesheet (replaces the
+     shadcn init `globals.css` theme block), or
+   - Paste ONLY the :root / .dark blocks into tweakcn.com → Import
+     to keep tweaking visually.
+   ============================================================ */
+
+/* --- Fonts ---------------------------------------------------
+   Pretendard: all UI + body (Korean + Latin)
+   Poppins: display / numeric only (KPI values, big numbers)
+   NOTE: CDN imports. In air-gapped environments, self-host the
+   woff2 files and swap these imports. */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap");
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ================= LIGHT ================= */
+:root {
+  --background: #ffffff;                       /* background-normal */
+  --foreground: #171717;                       /* label-normal */
+  --card: #ffffff;                             /* surface: white + 1px line OR shallow shadow — not both */
+  --card-foreground: #171717;
+  --popover: #ffffff;
+  --popover-foreground: #171717;
+  --primary: #116dff;                          /* brand blue — the one and only */
+  --primary-foreground: #ffffff;
+  --secondary: rgba(112, 115, 124, 0.08);      /* fill-normal (quiet interactive surface) */
+  --secondary-foreground: #171717;
+  --muted: rgba(112, 115, 124, 0.05);          /* fill-alternative */
+  --muted-foreground: rgba(55, 56, 60, 0.61);  /* label-alternative */
+  --accent: rgba(112, 115, 124, 0.05);         /* hover wash — keep it subtle */
+  --accent-foreground: #171717;
+  --destructive: #e83034;                      /* status-negative */
+  --destructive-foreground: #ffffff;
+  --border: rgba(112, 115, 124, 0.16);         /* line-normal-neutral */
+  --input: rgba(112, 115, 124, 0.16);
+  --ring: #116dff;
+  /* Charts — TecAce accent palette (data-viz ONLY, never on controls) */
+  --chart-1: #116dff;                          /* blue-50 (primary) */
+  --chart-2: #00b9dc;                          /* cyan-50 */
+  --chart-3: #7038e1;                          /* purple-50 */
+  --chart-4: #f532a8;                          /* pink-50 */
+  --chart-5: #66bc12;                          /* lime-50 */
+  --chart-6: #5860d5;                          /* violet-50 */
+  --chart-7: #eb4e1c;                          /* red-orange-50 */
+  --sidebar: #f7f7f8;                          /* cool-neutral-99 */
+  --sidebar-foreground: #171717;
+  --sidebar-primary: #116dff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(112, 115, 124, 0.08);
+  --sidebar-accent-foreground: #171717;
+  --sidebar-border: rgba(112, 115, 124, 0.16);
+  --sidebar-ring: #116dff;
+
+  /* --- TecAce extensions (not in stock shadcn) --- */
+  --success: #0abe5c;                          /* status-positive */
+  --success-foreground: #ffffff;
+  --warning: #e18a0f;                          /* status-cautionary */
+  --warning-foreground: #ffffff;
+  --primary-strong: #0e64e6;                   /* hover / pressed */
+  --primary-heavy: #0b55cc;
+  --label-strong: #000000;
+  --label-neutral: rgba(46, 47, 51, 0.88);
+  --label-assistive: rgba(55, 56, 60, 0.28);   /* placeholders */
+  --label-disable: rgba(55, 56, 60, 0.16);
+  --fill-strong: rgba(112, 115, 124, 0.16);
+
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: Poppins, "Pretendard Variable", Pretendard, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius: 0.75rem;                           /* 12px — buttons/inputs; cards land at 16 via radius-xl */
+
+  /* Shadows — ambient only, never punchy (guide: 0.03 ~ 0.16) */
+  --shadow-2xs: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  --shadow-sm: 0 1px 2px 0 rgba(23, 23, 25, 0.06);
+  --shadow: 0 2px 8px 0 rgba(23, 23, 25, 0.08);
+  --shadow-md: 0 4px 12px 0 rgba(23, 23, 25, 0.1);
+  --shadow-lg: 0 8px 24px 0 rgba(23, 23, 25, 0.12);
+  --shadow-xl: 0 12px 32px 0 rgba(23, 23, 25, 0.14);
+  --shadow-2xl: 0 16px 48px 0 rgba(23, 23, 25, 0.16);
+}
+
+/* ================= DARK ================= */
+.dark {
+  --background: #1b1c1e;                       /* cool-neutral-15 */
+  --foreground: #f7f7f7;                       /* label-normal (dark) */
+  --card: #212225;                             /* background-elevated (dark) */
+  --card-foreground: #f7f7f7;
+  --popover: #212225;
+  --popover-foreground: #f7f7f7;
+  --primary: #5b84ff;                          /* primary-normal (dark) */
+  --primary-foreground: #ffffff;
+  --secondary: rgba(112, 115, 124, 0.22);      /* fill-normal (dark) */
+  --secondary-foreground: #f7f7f7;
+  --muted: rgba(112, 115, 124, 0.12);          /* fill-alternative (dark) */
+  --muted-foreground: rgba(174, 176, 182, 0.61);
+  --accent: rgba(112, 115, 124, 0.12);
+  --accent-foreground: #f7f7f7;
+  --destructive: #f05555;                      /* status-negative (dark) */
+  --destructive-foreground: #ffffff;
+  --border: rgba(112, 115, 124, 0.28);         /* line-normal-neutral (dark) */
+  --input: rgba(112, 115, 124, 0.28);
+  --ring: #5b84ff;
+  --chart-1: #5b84ff;
+  --chart-2: #28cdeb;                          /* cyan-60 */
+  --chart-3: #8e5aeb;                          /* purple-60 */
+  --chart-4: #f85fb9;                          /* pink-60 */
+  --chart-5: #87d237;                          /* lime-60 */
+  --chart-6: #787fde;                          /* violet-60 */
+  --chart-7: #f27041;                          /* red-orange-60 */
+  --sidebar: #171719;                          /* cool-neutral-10 */
+  --sidebar-foreground: #f7f7f7;
+  --sidebar-primary: #5b84ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(112, 115, 124, 0.22);
+  --sidebar-accent-foreground: #f7f7f7;
+  --sidebar-border: rgba(112, 115, 124, 0.22);
+  --sidebar-ring: #5b84ff;
+
+  --success: #37d278;
+  --success-foreground: #0c1126;
+  --warning: #eea832;
+  --warning-foreground: #0c1126;
+  --primary-strong: #3383ff;                   /* hover / pressed (dark) */
+  --primary-heavy: #116dff;
+  --label-strong: #ffffff;
+  --label-neutral: rgba(219, 220, 223, 0.88);
+  --label-assistive: rgba(174, 176, 182, 0.28);
+  --label-disable: rgba(174, 176, 182, 0.16);
+  --fill-strong: rgba(112, 115, 124, 0.28);
+}
+
+/* ============ Tailwind v4 theme mapping ============ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-primary-strong: var(--primary-strong);
+
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);      /* 8  — small buttons, chips-in-table */
+  --radius-md: calc(var(--radius) - 2px);      /* 10 — medium buttons */
+  --radius-lg: var(--radius);                  /* 12 — large buttons, inputs */
+  --radius-xl: calc(var(--radius) + 4px);      /* 16 — cards */
+  --radius-2xl: calc(var(--radius) + 8px);     /* 20 — dialogs */
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    font-weight: 500; /* TecAce body default is Medium 500, not 400 */
+    -webkit-font-smoothing: antialiased;
+  }
+  ::placeholder { color: var(--label-assistive); }
+}
+
+/* ============ TecAce type scale (19 styles, verbatim from Figma) ============
+   Use these instead of ad-hoc text-* sizing wherever a style exists.
+   Rule of thumb: >17px tightens tracking (negative), <17px loosens (positive). */
+.ta-display-1{font-family:var(--font-sans);font-weight:700;font-size:56px;line-height:72px;letter-spacing:-0.0319em}
+.ta-display-2{font-family:var(--font-sans);font-weight:700;font-size:40px;line-height:52px;letter-spacing:-0.0282em}
+.ta-display-3{font-family:var(--font-sans);font-weight:700;font-size:36px;line-height:48px;letter-spacing:-0.027em}
+.ta-title-1{font-family:var(--font-sans);font-weight:700;font-size:32px;line-height:44px;letter-spacing:-0.0253em}
+.ta-title-2{font-family:var(--font-sans);font-weight:700;font-size:28px;line-height:38px;letter-spacing:-0.0236em}
+.ta-title-3{font-family:var(--font-sans);font-weight:700;font-size:24px;line-height:32px;letter-spacing:-0.023em}
+.ta-heading-1{font-family:var(--font-sans);font-weight:600;font-size:22px;line-height:30px;letter-spacing:-0.0194em}
+.ta-heading-2{font-family:var(--font-sans);font-weight:600;font-size:20px;line-height:28px;letter-spacing:-0.012em}
+.ta-headline-1{font-family:var(--font-sans);font-weight:600;font-size:18px;line-height:26px;letter-spacing:-0.002em}
+.ta-headline-2{font-family:var(--font-sans);font-weight:600;font-size:17px;line-height:24px;letter-spacing:0}
+.ta-body-1{font-family:var(--font-sans);font-weight:500;font-size:16px;line-height:24px;letter-spacing:0.0057em}
+.ta-body-1-reading{font-family:var(--font-sans);font-weight:500;font-size:16px;line-height:26px;letter-spacing:0.0057em}
+.ta-body-2{font-family:var(--font-sans);font-weight:500;font-size:15px;line-height:22px;letter-spacing:0.0096em}
+.ta-body-2-reading{font-family:var(--font-sans);font-weight:500;font-size:15px;line-height:24px;letter-spacing:0.0096em}
+.ta-label-1{font-family:var(--font-sans);font-weight:500;font-size:14px;line-height:20px;letter-spacing:0.0145em}
+.ta-label-1-reading{font-family:var(--font-sans);font-weight:500;font-size:14px;line-height:22px;letter-spacing:0.0145em}
+.ta-label-2{font-family:var(--font-sans);font-weight:500;font-size:13px;line-height:18px;letter-spacing:0.0194em}
+.ta-caption-1{font-family:var(--font-sans);font-weight:500;font-size:12px;line-height:16px;letter-spacing:0.0252em}
+.ta-caption-2{font-family:var(--font-sans);font-weight:500;font-size:11px;line-height:14px;letter-spacing:0.0311em}
+
+/* KPI numerals — Poppins, tabular */
+.ta-numeric{font-family:var(--font-display);font-variant-numeric:tabular-nums;font-weight:600}
