@@ -56,7 +56,7 @@ def match_fifo(
 
     remaining = qty
     slices: list[RealizedSlice] = []
-    for lot in sorted(lots, key=lambda l: (l.acquired_at, l.lot_id)):
+    for lot in sorted(lots, key=lambda entry: (entry.acquired_at, entry.lot_id)):
         if remaining <= 0:
             break
         if lot.open_qty <= 0:

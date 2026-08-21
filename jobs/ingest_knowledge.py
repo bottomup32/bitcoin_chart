@@ -37,7 +37,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from core.llm_log import CallRecord, Usage, measure_chars, record_call
-from core.memory import AGENT_HORIZONS, UNTRIGGERED_TAGS
+from core.memory import UNTRIGGERED_TAGS
 from db.client import get_conn
 
 MAX_DOC_CHARS = 200_000

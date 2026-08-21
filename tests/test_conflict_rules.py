@@ -1,4 +1,4 @@
-from core.conflict_rules import Decision, OpinionInput, TaxFlags, decide
+from core.conflict_rules import OpinionInput, TaxFlags, decide
 from core.orchestrator import flags_from_lots
 
 

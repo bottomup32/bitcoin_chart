@@ -25,6 +25,8 @@ from core.scoring import HORIZON_DAYS, TIMEFRAME_HORIZON, ema, shrunk_skill
 from db.client import get_conn
 from jobs.run_evaluate import (
     MAX_STEP_SMALL_SAMPLE as MAX_STEP,
+)
+from jobs.run_evaluate import (
     MIN_N_EFF,
     SCORABLE_AGENTS,
     WEIGHT_CEIL,
