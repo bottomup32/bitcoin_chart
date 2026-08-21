@@ -17,7 +17,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from core.llm_log import CallRecord, Usage, measure_chars
+from core.claude_cli import run_structured, transport
+from core.llm_log import CallRecord, Usage, measure_chars, system_text
 
 DEFAULT_MODEL = "claude-sonnet-5"  # PLAN.md §3; override with MODEL_ID env
 PROMPT_VERSION = "v1"
@@ -74,7 +75,23 @@ def run_agent(
 
     Returns the opinions alongside the call's token accounting, so the caller
     can log the cost without the agent module needing a DB handle.
+
+    LLM_TRANSPORT=claude_cli routes the call through headless Claude Code
+    (core/claude_cli.py) so it draws on the subscription instead of API
+    billing; the default stays the SDK with tool-enforced structured output.
     """
+    chars = measure_chars(
+        system_prompt, context, system_knowledge_chars=system_knowledge_chars
+    )
+    prompt = json.dumps(context, default=str, ensure_ascii=False)
+
+    if transport() == "claude_cli":
+        parsed, usage = run_structured(
+            system_text(system_prompt), prompt, OpinionSet, model_id()
+        )
+        record = CallRecord(usage=usage, chars=chars, ok=parsed is not None)
+        return (parsed.opinions if parsed else []), record
+
     import anthropic
 
     client = anthropic.Anthropic()
@@ -82,20 +99,13 @@ def run_agent(
         model=model_id(),
         max_tokens=16000,
         system=system_prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": json.dumps(context, default=str, ensure_ascii=False),
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
         output_format=OpinionSet,
     )
     parsed = response.parsed_output
     record = CallRecord(
         usage=Usage.from_response(response),
-        chars=measure_chars(
-            system_prompt, context, system_knowledge_chars=system_knowledge_chars
-        ),
+        chars=chars,
         ok=parsed is not None,
     )
     return (parsed.opinions if parsed else []), record

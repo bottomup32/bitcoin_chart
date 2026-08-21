@@ -169,6 +169,16 @@ def synthesize_narrative(
     }
     chars = measure_chars(NARRATIVE_SYSTEM, payload)
     try:
+        from core.claude_cli import run_text, transport
+
+        if transport() == "claude_cli":
+            text, usage = run_text(
+                NARRATIVE_SYSTEM,
+                json.dumps(payload, ensure_ascii=False),
+                model_id(),
+            )
+            return text, CallRecord(usage=usage, chars=chars, ok=text is not None)
+
         client = anthropic.Anthropic()
         response = client.messages.create(
             model=model_id(),

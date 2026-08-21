@@ -29,6 +29,7 @@ from agents.context import (
     tax_context,
 )
 from agents.memory import build_memory, core_knowledge, with_core_knowledge
+from core.claude_cli import cli_available, transport
 from core.llm_log import CallRecord, measure_chars, record_call, usage_line
 from core.orchestrator import orchestrate, synthesize_narrative, tax_alerts
 from core.report import build_report
@@ -50,8 +51,13 @@ def _universe(cur) -> dict[str, str]:
 
 
 def main() -> int:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ANTHROPIC_API_KEY not set; skipping advise run")
+    if transport() == "claude_cli":
+        if not cli_available():
+            print("LLM_TRANSPORT=claude_cli but no claude CLI on PATH; skipping")
+            return 0
+    elif not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ANTHROPIC_API_KEY not set; skipping advise run "
+              "(or set LLM_TRANSPORT=claude_cli to use the subscription)")
         return 0
 
     session = latest_completed_session()
