@@ -10,7 +10,6 @@ import types
 from datetime import date
 
 import pandas as pd
-import pytest
 
 from adapters.prices import fetch_yfinance
 
